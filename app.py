@@ -15,14 +15,14 @@ st.set_page_config(
 )
 
 # -----------------------------------------------------------------------------
-# 1. Session State 初始化
+# 1. Session State
 # -----------------------------------------------------------------------------
 if "rows_count" not in st.session_state:
     st.session_state.rows_count = 5
 
 
 # -----------------------------------------------------------------------------
-# 2. 影像壓印文字 (白色 60% 透明度背景 + 微軟正黑體)
+# 2. 照片壓印文字功能 (修正字體大小)
 # -----------------------------------------------------------------------------
 def process_photo_with_text(image_bytes, text):
     image = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
@@ -31,7 +31,9 @@ def process_photo_with_text(image_bytes, text):
     overlay = Image.new("RGBA", image.size, (255, 255, 255, 0))
     draw = ImageDraw.Draw(overlay)
 
-    font_size = max(18, int(min(width, height) * 0.038))
+    # 調整字體大小比例：從 0.038 調小至 0.028 (可依需求自行微調)
+    font_size = max(16, int(min(width, height) * 0.028))
+
     font_paths = ["msjh.ttc", "msjhbd.ttc", "TaipeiSansTCBeta-Bold.ttf"]
     font = None
     for path in font_paths:
@@ -43,8 +45,8 @@ def process_photo_with_text(image_bytes, text):
     if font is None:
         font = ImageFont.load_default()
 
-    margin = int(min(width, height) * 0.03)
-    padding = 12
+    margin = int(min(width, height) * 0.025)
+    padding = 10
 
     lines = text.split("\n") if text else [" "]
     line_heights = [
@@ -55,20 +57,20 @@ def process_photo_with_text(image_bytes, text):
     )
 
     box_w = max_line_width + (padding * 2)
-    box_h = sum(line_heights) + (padding * 2) + (len(lines) - 1) * 6
+    box_h = sum(line_heights) + (padding * 2) + (len(lines) - 1) * 5
 
     x1 = margin
     y2 = height - margin
     x2 = x1 + box_w
     y1 = y2 - box_h
 
-    # 60% 透明度白色背景
+    # 60% 白色半透明背景 (Alpha = 153)
     draw.rectangle([x1, y1, x2, y2], fill=(255, 255, 255, 153))
 
     curr_y = y1 + padding
     for line in lines:
         draw.text((x1 + padding, curr_y), line, fill=(0, 0, 0, 255), font=font)
-        curr_y += (font.getbbox(line)[3] - font.getbbox(line)[1]) + 6
+        curr_y += (font.getbbox(line)[3] - font.getbbox(line)[1]) + 5
 
     combined = Image.alpha_composite(image, overlay)
     output = io.BytesIO()
@@ -88,41 +90,42 @@ def set_cell_border_none(cell):
 
 
 # -----------------------------------------------------------------------------
-# 3. CSS 注入：確保藍色分割線上方完全固定凍結
+# 3. CSS 注入：明確將藍色分隔線設在頂部凍結區塊的正下方
 # -----------------------------------------------------------------------------
 st.markdown(
     """
     <style>
+    /* 預留上方固定區域的空間 */
     .main .block-container {
         max-width: 550px !important;
-        padding-top: 10px !important;
+        padding-top: 0rem !important;
         padding-bottom: 2rem;
     }
     
-    /* 藍色分割線上方凍結容器 */
-    .frozen-top-container {
+    /* 凍結頂部：上傳按鈕 + 縮圖 + 最下方的藍色線 */
+    .frozen-header {
         position: sticky;
         top: 0;
         background-color: #ffffff;
         z-index: 9999;
-        padding-top: 10px;
+        padding-top: 15px;
         padding-bottom: 10px;
-        border-bottom: 3px solid #3388ff; /* 藍色分隔線 */
+        border-bottom: 3px solid #2b7cff !important; /* 藍色線設定在凍結區最下方 */
+        margin-bottom: 15px;
     }
 
-    /* 單行滾動縮圖 */
-    .thumb-scroll-container {
+    .thumb-scroll {
         display: flex;
         overflow-x: auto;
         gap: 8px;
-        padding: 5px 0;
+        padding-top: 8px;
     }
-    .thumb-scroll-container img {
-        width: 65px;
-        height: 65px;
+    .thumb-scroll img {
+        width: 60px;
+        height: 60px;
         object-fit: cover;
         border-radius: 6px;
-        border: 1px solid #ccc;
+        border: 1px solid #ddd;
     }
     </style>
 """,
@@ -130,9 +133,9 @@ st.markdown(
 )
 
 # -----------------------------------------------------------------------------
-# 4. 藍色線以上：凍結區域 (上傳 + 縮圖)
+# 4. 凍結區塊 (藍色線以上)
 # -----------------------------------------------------------------------------
-st.markdown('<div class="frozen-top-container">', unsafe_allow_html=True)
+st.markdown('<div class="frozen-header">', unsafe_allow_html=True)
 
 uploaded_files = st.file_uploader(
     "照片上傳 (1~30張)",
@@ -142,24 +145,23 @@ uploaded_files = st.file_uploader(
 )
 
 if uploaded_files:
-    thumb_html_list = []
+    thumb_htmls = []
     for idx, f in enumerate(uploaded_files[:30]):
         b64_str = base64.b64encode(f.getvalue()).decode("utf-8")
-        thumb_html_list.append(
+        thumb_htmls.append(
             f'<img src="data:image/jpeg;base64,{b64_str}" title="照片 {idx+1:02d}">'
         )
 
     st.markdown(
-        f'<div class="thumb-scroll-container">{"".join(thumb_html_list)}</div>',
+        f'<div class="thumb-scroll">{"".join(thumb_htmls)}</div>',
         unsafe_allow_html=True,
     )
 
-st.markdown("</div>", unsafe_allow_html=True)  # 凍結區結束 (藍色線)
+st.markdown("</div>", unsafe_allow_html=True)  # 藍色線結束點
 
 # -----------------------------------------------------------------------------
-# 5. 藍色線下方：數字清單、照片分配與文字框
+# 5. 畫面下半部：清單區
 # -----------------------------------------------------------------------------
-st.write(" ")
 photo_options = ["(未選擇)"] + [
     f"照片 {i+1:02d} - {f.name}" for i, f in enumerate(uploaded_files or [])
 ]
@@ -167,7 +169,7 @@ photo_options = ["(未選擇)"] + [
 for i in range(1, st.session_state.rows_count + 1):
     row_num = f"{i:02d}"
 
-    col_num, col_select, col_txt = st.columns([0.6, 1.8, 2.6])
+    col_num, col_select, col_txt = st.columns([0.5, 1.8, 2.7])
 
     with col_num:
         st.markdown(f"### {row_num}")
@@ -189,19 +191,18 @@ for i in range(1, st.session_state.rows_count + 1):
             f"敘述 {row_num}",
             placeholder="文字敘述...",
             key=f"desc_{i}",
-            height=85,
+            height=80,
             label_visibility="collapsed",
         )
 
-# '+' 按鈕增加列數
-if st.button("➕"):
+if st.button("➕ 新增項目"):
     st.session_state.rows_count += 1
     st.rerun()
 
 st.divider()
 
 # -----------------------------------------------------------------------------
-# 6. 下載區
+# 6. 匯出下載
 # -----------------------------------------------------------------------------
 st.subheader("📥 下載專區")
 today_str = datetime.now().strftime("%Y%m%d")
@@ -214,7 +215,6 @@ dl_mode = st.radio(
 
 col_dl_photo, col_dl_word = st.columns(2)
 
-# 下載照片
 with col_dl_photo:
     if dl_mode == "💻 電腦模式 (下載 ZIP 壓縮檔)":
         if st.button("下載照片"):
@@ -239,7 +239,7 @@ with col_dl_photo:
 
                 zip_buffer.seek(0)
                 st.download_button(
-                    "⬇️ 點此下載照片 (ZIP)",
+                    "⬇️ 下載照片 ZIP",
                     data=zip_buffer,
                     file_name=f"Photos_{today_str}.zip",
                     mime="application/zip",
@@ -261,7 +261,6 @@ with col_dl_photo:
                     key=f"dl_single_{idx}",
                 )
 
-# 下載 Word
 with col_dl_word:
     if st.button("下載word", use_container_width=True):
         if not uploaded_files:
@@ -310,7 +309,7 @@ with col_dl_word:
             doc_io.seek(0)
 
             st.download_button(
-                label=f"⬇️ 點此下載 {today_str}_01.docx",
+                label=f"⬇️ 下載 {today_str}_01.docx",
                 data=doc_io,
                 file_name=f"{today_str}_01.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
