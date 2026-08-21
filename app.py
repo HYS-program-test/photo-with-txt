@@ -163,7 +163,10 @@ def build_dnd_html(photo_map, assignments, row_keys, box_height):
           padding:6px; display:flex; flex-wrap:wrap; gap:6px; touch-action:none; }}
       .row-drop:empty::after {{ content:"尚未指派照片"; color:#9aa4b2; font-size:14px; line-height:64px; }}
       .sortable-ghost {{ opacity:0.3; }}
+      #dnd-status {{ font-size:11px; color:#c0392b; padding:3px 6px; background:#fff8f0;
+          border-bottom:1px dashed #eab676; min-height:14px; white-space:pre-wrap; }}
     </style>
+    <div id="dnd-status">狀態：載入中…</div>
     <div id="scroll-wrap">
       <div class="pool-wrap dnd-list" data-row="__pool__">{pool_html}</div>
       <div>{rows_html}</div>
@@ -171,7 +174,12 @@ def build_dnd_html(photo_map, assignments, row_keys, box_height):
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
     <script>
     (function () {{
+      function log(msg) {{
+        var el = document.getElementById('dnd-status');
+        if (el) el.textContent = '狀態：' + msg;
+      }}
       function syncState() {{
+        log('偵測到拖放結束，開始同步…');
         var state = {{}};
         document.querySelectorAll('.row-drop').forEach(function (el) {{
           var row = el.getAttribute('data-row');
@@ -183,17 +191,25 @@ def build_dnd_html(photo_map, assignments, row_keys, box_height):
         try {{
           var doc = window.parent.document;
           var target = doc.querySelector('input[aria-label="dnd_sync_field"]');
-          if (target) {{
-            var setter = Object.getOwnPropertyDescriptor(window.parent.HTMLInputElement.prototype, 'value').set;
-            setter.call(target, jsonStr);
-            target.dispatchEvent(new Event('input', {{ bubbles: true }}));
+          if (!target) {{
+            log('錯誤：在父頁面找不到隱藏欄位 (input[aria-label=dnd_sync_field])');
+            return;
           }}
+          var setter = Object.getOwnPropertyDescriptor(window.parent.HTMLInputElement.prototype, 'value').set;
+          setter.call(target, jsonStr);
+          target.dispatchEvent(new Event('input', {{ bubbles: true }}));
+          log('已寫入隱藏欄位並觸發事件：' + jsonStr.slice(0, 80));
         }} catch (e) {{
-          console.error('dnd sync failed', e);
+          log('錯誤：' + (e && e.message ? e.message : e));
         }}
       }}
       function initSortable() {{
-        document.querySelectorAll('.dnd-list').forEach(function (el) {{
+        if (typeof Sortable === 'undefined') {{
+          log('錯誤：Sortable.js 沒有成功載入（可能是網路擋住了 CDN）');
+          return;
+        }}
+        var lists = document.querySelectorAll('.dnd-list');
+        lists.forEach(function (el) {{
           new Sortable(el, {{
             group: 'photos',
             animation: 150,
@@ -201,6 +217,7 @@ def build_dnd_html(photo_map, assignments, row_keys, box_height):
             onEnd: syncState
           }});
         }});
+        log('已初始化，共 ' + lists.length + ' 個清單，可以開始拖曳');
       }}
       initSortable();
     }})();
