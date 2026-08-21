@@ -65,6 +65,16 @@
     // 畫面渲染
     // ---------------------------------------------------------------
     var currentArgs = null;
+    var lastRenderedStr = null;
+
+    function stateSignature(assignments, descriptions, rowKeys, photoKeys) {
+      return JSON.stringify({
+        a: assignments || {},
+        d: descriptions || {},
+        r: rowKeys || [],
+        p: photoKeys || []
+      });
+    }
 
     function escapeHtml(s) {
       return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -76,11 +86,20 @@
     }
 
     function render(args) {
-      currentArgs = args;
       var photos = args.photos || {};
       var assignments = args.assignments || {};
       var descriptions = args.descriptions || {};
       var rowKeys = args.rowKeys || [];
+
+      var incomingSig = stateSignature(assignments, descriptions, rowKeys, Object.keys(photos));
+      if (currentArgs !== null && incomingSig === lastRenderedStr) {
+        // 這是我們自己剛送出去、Streamlit 原封不動回傳的狀態，DOM 已經是對的，
+        // 不需要重畫，避免打斷正在輸入中的文字框（游標/焦點）
+        setFrameHeight();
+        return;
+      }
+      lastRenderedStr = incomingSig;
+      currentArgs = args;
 
       var assignedKeys = {};
       Object.keys(assignments).forEach(function (rk) {
@@ -132,6 +151,10 @@
 
     function syncState(reason) {
       var state = gatherState();
+      var photoKeys = currentArgs && currentArgs.photos ? Object.keys(currentArgs.photos) : [];
+      var rowKeys = currentArgs ? currentArgs.rowKeys : [];
+      // 預先標記成「已渲染」，這樣等一下 Streamlit 把同樣的資料傳回來時就會被跳過，不會重畫打斷輸入
+      lastRenderedStr = stateSignature(state.assignments, state.descriptions, rowKeys, photoKeys);
       setComponentValue(state);
       log("已同步（" + reason + "）：" + JSON.stringify(state).slice(0, 80));
     }
