@@ -66,9 +66,17 @@ def make_photo_key(f):
 # -----------------------------------------------------------------------------
 # 2. 照片壓印文字功能：白色 60% 透明底、靠左對齊、微軟正黑體
 # -----------------------------------------------------------------------------
+MAX_DIMENSION = 1920  # 輸出照片長邊上限，避免手機拍的原始大圖直接整張輸出
+
+
 def process_photo_with_text(image_bytes, text):
     image = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
     width, height = image.size
+
+    if max(width, height) > MAX_DIMENSION:
+        scale = MAX_DIMENSION / max(width, height)
+        image = image.resize((int(width * scale), int(height * scale)), Image.LANCZOS)
+        width, height = image.size
 
     overlay = Image.new("RGBA", image.size, (255, 255, 255, 0))
     draw = ImageDraw.Draw(overlay)
@@ -129,6 +137,47 @@ def set_cell_border_none(cell):
         border.set(qn("w:val"), "none")
         tcBorders.append(border)
     tcPr.append(tcBorders)
+
+
+def build_download_all_html(files):
+    """files: list of (filename, base64_jpeg_str)。產生一顆按鈕，點一下依序觸發每張照片各自下載（非壓縮檔）。"""
+    files_json = json.dumps(files)
+    return f"""
+    <meta charset="utf-8">
+    <style>
+      body {{ margin:0; font-family:"Microsoft JhengHei", -apple-system, sans-serif; }}
+      #dl-all-btn {{ width:100%; padding:10px; font-size:15px; font-weight:600; color:#111827;
+          background:#f3f5f8; border:1px solid #d8dde5; border-radius:8px; cursor:pointer; }}
+      #dl-all-btn:active {{ background:#e7ebf1; }}
+      #dl-all-status {{ font-size:12px; color:#6b7280; margin-top:6px; min-height:14px; }}
+    </style>
+    <button id="dl-all-btn">⬇️ 一鍵下載全部照片（共 {len(files)} 張）</button>
+    <div id="dl-all-status"></div>
+    <script>
+      var files = {files_json};
+      document.getElementById('dl-all-btn').addEventListener('click', function () {{
+        var statusEl = document.getElementById('dl-all-status');
+        var i = 0;
+        function next() {{
+          if (i >= files.length) {{
+            statusEl.textContent = '完成，共下載 ' + files.length + ' 張照片。';
+            return;
+          }}
+          var f = files[i];
+          statusEl.textContent = '下載中… (' + (i + 1) + '/' + files.length + ') ' + f.name;
+          var a = document.createElement('a');
+          a.href = 'data:image/jpeg;base64,' + f.data;
+          a.download = f.name;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          i += 1;
+          setTimeout(next, 350);
+        }}
+        next();
+      }});
+    </script>
+    """
 
 
 # -----------------------------------------------------------------------------
@@ -402,7 +451,7 @@ today_str = datetime.now().strftime("%Y%m%d")
 
 dl_mode = st.radio(
     "照片下載模式：",
-    ["📱 手機模式 (逐張下載，方便直接檢視)", "💻 電腦模式 (下載 ZIP 壓縮檔)"],
+    ["📱 手機模式 (一鍵下載全部照片，非壓縮檔)", "💻 電腦模式 (下載 ZIP 壓縮檔)"],
     horizontal=False,
 )
 
@@ -434,22 +483,26 @@ with col_dl_photo:
                     mime="application/zip",
                 )
     else:
-        for idx in range(1, st.session_state.rows_count + 1):
-            row_num = f"{idx:02d}"
-            pkeys = st.session_state.assignments.get(row_num, [])
-            desc = st.session_state.desc_text.get(row_num, "")
-            for n, pkey in enumerate(pkeys, start=1):
-                if pkey not in photo_map:
-                    continue
-                img_out = process_photo_with_text(photo_map[pkey].getvalue(), desc)
-                suffix = f"-{n}" if len(pkeys) > 1 else ""
-                st.download_button(
-                    label=f"⬇️ 下載 {today_str}-{row_num}{suffix}.jpg",
-                    data=img_out,
-                    file_name=f"{today_str}-{row_num}{suffix}.jpg",
-                    mime="image/jpeg",
-                    key=f"dl_single_{idx}_{n}",
-                )
+        if not photo_map or not any(st.session_state.assignments.values()):
+            st.warning("請先上傳照片並指派到列表！")
+        else:
+            files_payload = []
+            for idx in range(1, st.session_state.rows_count + 1):
+                row_num = f"{idx:02d}"
+                pkeys = st.session_state.assignments.get(row_num, [])
+                desc = st.session_state.desc_text.get(row_num, "")
+                for n, pkey in enumerate(pkeys, start=1):
+                    if pkey not in photo_map:
+                        continue
+                    img_out = process_photo_with_text(photo_map[pkey].getvalue(), desc)
+                    suffix = f"-{n}" if len(pkeys) > 1 else ""
+                    fname = f"{today_str}-{row_num}{suffix}.jpg"
+                    files_payload.append({
+                        "name": fname,
+                        "data": base64.b64encode(img_out.getvalue()).decode(),
+                    })
+            if files_payload:
+                components.html(build_download_all_html(files_payload), height=80)
 
 with col_dl_word:
     if st.button("下載word", use_container_width=True):
