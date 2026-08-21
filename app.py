@@ -38,7 +38,7 @@ FONT_PATHS = ["msjh.ttc", "msjhbd.ttc", "TaipeiSansTCBeta-Bold.ttf", "NotoSansTC
 if "rows_count" not in st.session_state:
     st.session_state.rows_count = 5
 if "assignments" not in st.session_state:
-    st.session_state.assignments = {}  # {"01": ["P01", "P03"], "02": [], ...}
+    st.session_state.assignments = {}  # {"01": "P01", "02": "P03", ...}
 if "uploaded_signature" not in st.session_state:
     st.session_state.uploaded_signature = None
 
@@ -149,15 +149,12 @@ st.markdown(
 
 sortable_style = """
 .sortable-component { padding: 0; }
-.sortable-container { display: flex; align-items: flex-start; gap: 10px;
-    border-bottom: 1px solid #eee; padding: 10px 0; min-height: 78px; }
-.sortable-container-header { flex: 0 0 46px; font-size: 20px; font-weight: 700;
-    color: #111827; padding-top: 6px; }
-.sortable-container-body { flex: 1; background-color: #f3f5f8; border-radius: 8px;
-    padding: 8px; min-height: 60px; display: flex; flex-wrap: wrap; gap: 6px; align-content: flex-start; }
-.sortable-container-body:empty::after { content: "尚未指派照片"; color: #9aa4b2; font-size: 14px; }
-.sortable-item { background-color: #e7edfb; border: 1px solid #b9c8ee; border-radius: 6px;
-    padding: 4px 10px; font-size: 13px; color: #333; }
+.sortable-container { background-color: transparent; border-bottom: 1px solid #eee;
+    margin-bottom: 2px; padding-bottom: 4px; }
+.sortable-container-header { background-color: transparent; color: #111827; padding: 2px 2px;
+    font-size: 22px; font-weight: 700; border-radius: 0; }
+.sortable-item { background-color: #f0f3f9; border: 1px solid #cfd8e8; border-radius: 6px;
+    padding: 5px 10px; font-size: 13px; color: #333; }
 """
 
 # -----------------------------------------------------------------------------
@@ -201,53 +198,78 @@ if uploaded_files:
 st.markdown("</div>", unsafe_allow_html=True)  # 藍色線結束點
 
 # -----------------------------------------------------------------------------
-# 5. 拖曳指派 + 文字敘述：左側「編號＋拖曳目的地（尚未指派照片）」／右側「文字敘述」
-#    每一列的拖曳目的地就是「尚未指派照片」文字出現的位置，可放單張或多張照片
+# 5. 拖曳分配區（自訂元件：streamlit-sortables，跨容器拖曳）
 # -----------------------------------------------------------------------------
 if uploaded_files:
     assignments = st.session_state.assignments
-    assigned_keys = {k for keys in assignments.values() for k in keys}
+    assigned_keys = set(assignments.values())
     pool_items = [photo_thumb_label[k] for k in photo_map if k not in assigned_keys]
 
     # 反查：顯示文字 -> photo key
     label_to_key = {v: k for k, v in photo_thumb_label.items()}
 
+    containers = [{"header": "待分配照片", "items": pool_items}]
     row_keys = [f"{i:02d}" for i in range(1, st.session_state.rows_count + 1)]
-    containers = [{"header": "待分配", "items": pool_items}]
     for rk in row_keys:
-        current_keys = assignments.get(rk, [])
-        items = [photo_thumb_label[k] for k in current_keys if k in photo_map]
+        current_key = assignments.get(rk)
+        items = [photo_thumb_label[current_key]] if current_key and current_key in photo_map else []
         containers.append({"header": rk, "items": items})
 
-    col_drop, col_desc = st.columns([2.3, 2.7])
+    # key 隨照片數量與列數變化而改變，避免元件內部狀態與 Python 端不同步
+    sortable_key = f"sortable_{len(photo_map)}_{st.session_state.rows_count}"
 
-    with col_drop:
-        result = sort_items(containers, multi_containers=True, direction="horizontal", custom_style=sortable_style)
+    result = sort_items(containers, multi_containers=True, direction="horizontal", custom_style=sortable_style)
 
-        new_assignments = {}
-        if result:
-            for container in result[1:]:
-                row_key = container["header"]
-                new_assignments[row_key] = [
-                    label_to_key[lbl] for lbl in container["items"] if lbl in label_to_key
-                ]
+    # 解析拖曳結果，寫回 assignments；若同一列被塞入多張，只保留第一張，其餘退回待分配區
+    new_assignments = {}
+    overflow = False
+    if result:
+        for container in result[1:]:
+            row_key = container["header"]
+            items = container["items"]
+            if items:
+                if len(items) > 1:
+                    overflow = True
+                new_assignments[row_key] = label_to_key.get(items[0])
 
-        if new_assignments != assignments:
-            st.session_state.assignments = new_assignments
+    if new_assignments != assignments:
+        st.session_state.assignments = new_assignments
+        if overflow:
             st.rerun()
-
-    with col_desc:
-        for i in range(1, st.session_state.rows_count + 1):
-            row_num = f"{i:02d}"
-            st.text_area(
-                f"敘述 {row_num}",
-                placeholder="文字敘述...",
-                key=f"desc_{i}",
-                height=90,
-                label_visibility="collapsed",
-            )
 else:
     st.info("請先上傳照片")
+
+st.divider()
+
+# -----------------------------------------------------------------------------
+# 6. 下排清單：編號 + 縮圖 + 文字敘述
+# -----------------------------------------------------------------------------
+for i in range(1, st.session_state.rows_count + 1):
+    row_num = f"{i:02d}"
+    assigned_key = st.session_state.assignments.get(row_num)
+
+    col_num, col_thumb, col_txt = st.columns([0.5, 1.8, 2.7])
+
+    with col_num:
+        st.markdown(f"### {row_num}")
+
+    with col_thumb:
+        if assigned_key and assigned_key in photo_map:
+            st.image(photo_map[assigned_key], use_container_width=True)
+            if st.button("✕ 移除", key=f"remove_{i}"):
+                st.session_state.assignments.pop(row_num, None)
+                st.rerun()
+        else:
+            st.caption("尚未指派照片")
+
+    with col_txt:
+        st.text_area(
+            f"敘述 {row_num}",
+            placeholder="文字敘述...",
+            key=f"desc_{i}",
+            height=80,
+            label_visibility="collapsed",
+        )
 
 if st.button("➕ 新增項目"):
     st.session_state.rows_count += 1
@@ -272,21 +294,18 @@ col_dl_photo, col_dl_word = st.columns(2)
 with col_dl_photo:
     if dl_mode == "💻 電腦模式 (下載 ZIP 壓縮檔)":
         if st.button("下載照片"):
-            if not photo_map or not any(st.session_state.assignments.values()):
+            if not photo_map or not st.session_state.assignments:
                 st.warning("請先上傳照片並指派到列表！")
             else:
                 zip_buffer = io.BytesIO()
                 with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
                     for idx in range(1, st.session_state.rows_count + 1):
                         row_num = f"{idx:02d}"
-                        pkeys = st.session_state.assignments.get(row_num, [])
+                        pkey = st.session_state.assignments.get(row_num)
                         desc = st.session_state.get(f"desc_{idx}", "")
-                        for n, pkey in enumerate(pkeys, start=1):
-                            if pkey not in photo_map:
-                                continue
+                        if pkey and pkey in photo_map:
                             img_out = process_photo_with_text(photo_map[pkey].getvalue(), desc)
-                            suffix = f"-{n}" if len(pkeys) > 1 else ""
-                            zf.writestr(f"{today_str}-{row_num}{suffix}.jpg", img_out.getvalue())
+                            zf.writestr(f"{today_str}-{row_num}.jpg", img_out.getvalue())
                 zip_buffer.seek(0)
                 st.download_button(
                     "⬇️ 下載照片 ZIP",
@@ -297,24 +316,21 @@ with col_dl_photo:
     else:
         for idx in range(1, st.session_state.rows_count + 1):
             row_num = f"{idx:02d}"
-            pkeys = st.session_state.assignments.get(row_num, [])
+            pkey = st.session_state.assignments.get(row_num)
             desc = st.session_state.get(f"desc_{idx}", "")
-            for n, pkey in enumerate(pkeys, start=1):
-                if pkey not in photo_map:
-                    continue
+            if pkey and pkey in photo_map:
                 img_out = process_photo_with_text(photo_map[pkey].getvalue(), desc)
-                suffix = f"-{n}" if len(pkeys) > 1 else ""
                 st.download_button(
-                    label=f"⬇️ 下載 {today_str}-{row_num}{suffix}.jpg",
+                    label=f"⬇️ 下載 {today_str}-{row_num}.jpg",
                     data=img_out,
-                    file_name=f"{today_str}-{row_num}{suffix}.jpg",
+                    file_name=f"{today_str}-{row_num}.jpg",
                     mime="image/jpeg",
-                    key=f"dl_single_{idx}_{n}",
+                    key=f"dl_single_{idx}",
                 )
 
 with col_dl_word:
     if st.button("下載word", use_container_width=True):
-        if not photo_map or not any(st.session_state.assignments.values()):
+        if not photo_map or not st.session_state.assignments:
             st.warning("請先上傳照片並指派到列表！")
         else:
             doc = Document()
@@ -327,12 +343,11 @@ with col_dl_word:
             items_to_print = []
             for idx in range(1, st.session_state.rows_count + 1):
                 row_num = f"{idx:02d}"
-                pkeys = st.session_state.assignments.get(row_num, [])
+                pkey = st.session_state.assignments.get(row_num)
                 desc = st.session_state.get(f"desc_{idx}", "")
-                for pkey in pkeys:
-                    if pkey in photo_map:
-                        img_out = process_photo_with_text(photo_map[pkey].getvalue(), desc)
-                        items_to_print.append(img_out)
+                if pkey and pkey in photo_map:
+                    img_out = process_photo_with_text(photo_map[pkey].getvalue(), desc)
+                    items_to_print.append(img_out)
 
             if not items_to_print:
                 st.warning("目前沒有已指派照片的項目！")
