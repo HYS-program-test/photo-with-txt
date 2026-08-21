@@ -71,8 +71,8 @@ def process_photo_with_text(image_bytes, text):
     overlay = Image.new("RGBA", image.size, (255, 255, 255, 0))
     draw = ImageDraw.Draw(overlay)
 
-    # 字級再放大 10 倍（在前一輪已放大 10 倍的基礎上，這次再乘 10 → 總共約原本的 100 倍）
-    font_size = max(1600, int(min(width, height) * 2.8))
+    # 文字爆掉了，從目前數值往回縮小 50 倍，重新檢視合理大小
+    font_size = max(32, int(min(width, height) * 0.056))
     font = None
     font_used = None
     for path in FONT_PATHS:
@@ -343,12 +343,29 @@ if uploaded_files:
     assignments = st.session_state.assignments
 
     pool_count = len(photo_map) - sum(len(v) for v in assignments.values())
-    pool_lines = max(1, -(-max(pool_count, 1) // 8))
-    content_height = 30 + pool_lines * 70 + len(row_keys) * 92 + 20
-    box_height = min(content_height, 480)
+    pool_lines = max(1, -(-max(pool_count, 1) // 3))
+    pool_height = 20 + pool_lines * 70
+    rows_height = len(row_keys) * 92
+    box_height = pool_height + rows_height + 20  # 不再限制上限、不做內部捲動，確保跟右側敘述欄位對得齊
 
-    html_code = build_dnd_html(photo_map, assignments, row_keys, box_height)
-    components.html(html_code, height=box_height, scrolling=False)
+    col_drop, col_desc = st.columns([1.3, 1])
+
+    with col_drop:
+        html_code = build_dnd_html(photo_map, assignments, row_keys, box_height)
+        components.html(html_code, height=box_height, scrolling=False)
+
+    with col_desc:
+        # 用一個等高的空白區塊墊高，讓「01」這一列在左右兩欄的起始高度一致
+        st.markdown(f'<div style="height:{pool_height}px;"></div>', unsafe_allow_html=True)
+        for i in range(1, st.session_state.rows_count + 1):
+            row_num = f"{i:02d}"
+            st.text_area(
+                f"敘述 {row_num}",
+                placeholder="文字敘述...",
+                key=f"desc_{i}",
+                height=76,
+                label_visibility="collapsed",
+            )
 
     with st.expander("🔧 除錯資訊（測試用，確認沒問題後可以請我刪掉）"):
         st.write("隱藏同步欄位目前收到的原始值 (dnd_sync_raw)：")
@@ -359,16 +376,6 @@ if uploaded_files:
         st.code(list(photo_map.keys()))
 
     st.write("")
-    for i in range(1, st.session_state.rows_count + 1):
-        row_num = f"{i:02d}"
-        st.markdown(f"**{row_num} 文字敘述**")
-        st.text_area(
-            f"敘述 {row_num}",
-            placeholder="文字敘述...",
-            key=f"desc_{i}",
-            height=80,
-            label_visibility="collapsed",
-        )
 else:
     st.info("請先上傳照片")
 
