@@ -1,3 +1,4 @@
+import base64
 import io
 import zipfile
 from datetime import datetime
@@ -155,12 +156,19 @@ uploaded_files = st.file_uploader(
 
 if uploaded_files:
     st.caption("縮圖預覽 (滑動可查看全貌)：")
-    # HTML/JS 輕量 HTML5/Touch Drag & Drop 支援手機觸控
-    thumb_imgs_html = "".join(
-        [
-            f'<img src="data:image/jpeg;base64,{io.BytesIO(f.getvalue()).hexdigest()}" width="65" height="65" style="object-fit:cover; margin-right:5px;" draggable="true">'
-            for f in uploaded_files[:30]
-        ]
+
+    # 將圖片編碼為 Base64 字串
+    thumb_html_list = []
+    for f in uploaded_files[:30]:
+        b64_str = base64.b64encode(f.getvalue()).decode("utf-8")
+        img_html = f'<img src="data:image/jpeg;base64,{b64_str}" width="65" height="65" style="object-fit:cover; margin-right:5px; border-radius:6px;" draggable="true">'
+        thumb_html_list.append(img_html)
+
+    thumb_imgs_html = "".join(thumb_html_list)
+
+    st.markdown(
+        f'<div class="thumb-scroll">{thumb_imgs_html}</div>',
+        unsafe_allow_html=True,
     )
     st.markdown(
         f'<div class="thumb-scroll">{thumb_imgs_html}</div>',
