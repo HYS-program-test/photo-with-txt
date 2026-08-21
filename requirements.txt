@@ -1,3 +1,4 @@
 streamlit
+streamlit-sortables
 python-docx
-Pillow
+pillow
