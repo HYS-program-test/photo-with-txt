@@ -252,7 +252,16 @@ if uploaded_files:
     if pruned != st.session_state.assignments:
         st.session_state.assignments = pruned
 
-    photos_b64 = {k: make_thumb_b64(f) for k, f in photo_map.items()}
+    if "thumb_cache" not in st.session_state:
+        st.session_state.thumb_cache = {}
+    stale_thumb_keys = [k for k in st.session_state.thumb_cache if k not in photo_map]
+    for k in stale_thumb_keys:
+        del st.session_state.thumb_cache[k]
+    photos_b64 = {}
+    for k, f in photo_map.items():
+        if k not in st.session_state.thumb_cache:
+            st.session_state.thumb_cache[k] = make_thumb_b64(f)
+        photos_b64[k] = st.session_state.thumb_cache[k]
 
     result = photo_dnd(
         photos=photos_b64,
