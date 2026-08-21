@@ -55,8 +55,6 @@ if "rows_count" not in st.session_state:
     st.session_state.rows_count = 5
 if "assignments" not in st.session_state:
     st.session_state.assignments = {}  # {"01": ["Pxxxxxxxxxx", ...], ...}
-if "desc_text" not in st.session_state:
-    st.session_state.desc_text = {}  # {"01": "文字敘述...", ...}
 
 
 def make_photo_key(f):
@@ -259,30 +257,36 @@ if uploaded_files:
     result = photo_dnd(
         photos=photos_b64,
         assignments=st.session_state.assignments,
-        descriptions=st.session_state.desc_text,
         row_keys=row_keys,
         key="photo_dnd_widget",
     )
 
     if result:
         new_assign = result.get("assignments", {})
-        new_desc = result.get("descriptions", {})
         st.session_state.assignments = {
             rk: [p for p in v if p in photo_map]
             for rk, v in new_assign.items()
             if rk in row_keys
         }
-        st.session_state.desc_text = {
-            rk: v for rk, v in new_desc.items() if rk in row_keys
-        }
+
+    st.write("")
+    st.caption("文字敘述（原生欄位，打字不會卡頓／不會閃爍）：")
+    for i in range(1, st.session_state.rows_count + 1):
+        row_num = f"{i:02d}"
+        st.markdown(f"**{row_num}**")
+        st.text_area(
+            f"敘述 {row_num}",
+            placeholder="文字敘述...",
+            key=f"desc_{i}",
+            height=76,
+            label_visibility="collapsed",
+        )
 
     with st.expander("🔧 除錯資訊（測試用，確認沒問題後可以請我刪掉）"):
         st.write("元件最新回傳值：")
         st.json(result)
         st.write("目前 session_state.assignments：")
         st.json(st.session_state.assignments)
-        st.write("目前 session_state.desc_text：")
-        st.json(st.session_state.desc_text)
         st.write("目前 photo_map 的 key：")
         st.code(list(photo_map.keys()))
 else:
@@ -325,7 +329,7 @@ def render_word_download_button():
             for idx in range(1, st.session_state.rows_count + 1):
                 row_num = f"{idx:02d}"
                 pkeys = st.session_state.assignments.get(row_num, [])
-                desc = st.session_state.desc_text.get(row_num, "")
+                desc = st.session_state.get(f"desc_{idx}", "")
                 for pkey in pkeys:
                     if pkey in photo_map:
                         img_out = process_photo_with_text(photo_map[pkey].getvalue(), desc)
@@ -377,7 +381,7 @@ if dl_mode == "💻 電腦模式 (下載 ZIP 壓縮檔)":
                     for idx in range(1, st.session_state.rows_count + 1):
                         row_num = f"{idx:02d}"
                         pkeys = st.session_state.assignments.get(row_num, [])
-                        desc = st.session_state.desc_text.get(row_num, "")
+                        desc = st.session_state.get(f"desc_{idx}", "")
                         for n, pkey in enumerate(pkeys, start=1):
                             if pkey not in photo_map:
                                 continue
@@ -401,7 +405,7 @@ else:
         for idx in range(1, st.session_state.rows_count + 1):
             row_num = f"{idx:02d}"
             pkeys = st.session_state.assignments.get(row_num, [])
-            desc = st.session_state.desc_text.get(row_num, "")
+            desc = st.session_state.get(f"desc_{idx}", "")
             for n, pkey in enumerate(pkeys, start=1):
                 if pkey not in photo_map:
                     continue
