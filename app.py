@@ -1,7 +1,24 @@
-import base64
+"""
+現場照片報告生成器
+------------------
+需求套件（requirements.txt）:
+    streamlit
+    streamlit-sortables
+    python-docx
+    pillow
+
+執行方式：
+    streamlit run app.py
+
+字型：預設嘗試載入「微軟正黑體 msjh.ttc」，若部署主機（例如 Linux 伺服器）沒有該字型，
+請將 msjh.ttc 或 TaipeiSansTCBeta-Bold.ttf 等中文字型檔案放在與 app.py 同一資料夾，
+或修改 FONT_PATHS 指向實際字型路徑，否則文字會退回系統預設字型（可能無法顯示中文）。
+"""
+
 import io
 import zipfile
 from datetime import datetime
+
 import streamlit as st
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -9,20 +26,25 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches
 from PIL import Image, ImageDraw, ImageFont
+from streamlit_sortables import sort_items
 
-st.set_page_config(
-    page_title="現場照片報告生成器", page_icon="📱", layout="centered"
-)
+st.set_page_config(page_title="現場照片報告生成器", page_icon="📱", layout="centered")
+
+FONT_PATHS = ["msjh.ttc", "msjhbd.ttc", "TaipeiSansTCBeta-Bold.ttf", "NotoSansTC-Regular.otf"]
 
 # -----------------------------------------------------------------------------
 # 1. Session State
 # -----------------------------------------------------------------------------
 if "rows_count" not in st.session_state:
     st.session_state.rows_count = 5
+if "assignments" not in st.session_state:
+    st.session_state.assignments = {}  # {"01": "P01", "02": "P03", ...}
+if "uploaded_signature" not in st.session_state:
+    st.session_state.uploaded_signature = None
 
 
 # -----------------------------------------------------------------------------
-# 2. 照片壓印文字功能 (修正字體大小)
+# 2. 照片壓印文字功能：白色 60% 透明底、靠左對齊、微軟正黑體
 # -----------------------------------------------------------------------------
 def process_photo_with_text(image_bytes, text):
     image = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
@@ -31,12 +53,9 @@ def process_photo_with_text(image_bytes, text):
     overlay = Image.new("RGBA", image.size, (255, 255, 255, 0))
     draw = ImageDraw.Draw(overlay)
 
-    # 調整字體大小比例：從 0.038 調小至 0.028 (可依需求自行微調)
     font_size = max(16, int(min(width, height) * 0.028))
-
-    font_paths = ["msjh.ttc", "msjhbd.ttc", "TaipeiSansTCBeta-Bold.ttf"]
     font = None
-    for path in font_paths:
+    for path in FONT_PATHS:
         try:
             font = ImageFont.truetype(path, font_size)
             break
@@ -49,12 +68,8 @@ def process_photo_with_text(image_bytes, text):
     padding = 10
 
     lines = text.split("\n") if text else [" "]
-    line_heights = [
-        font.getbbox(line)[3] - font.getbbox(line)[1] for line in lines
-    ]
-    max_line_width = max(
-        [font.getbbox(line)[2] - font.getbbox(line)[0] for line in lines]
-    )
+    line_heights = [font.getbbox(line)[3] - font.getbbox(line)[1] for line in lines]
+    max_line_width = max(font.getbbox(line)[2] - font.getbbox(line)[0] for line in lines)
 
     box_w = max_line_width + (padding * 2)
     box_h = sum(line_heights) + (padding * 2) + (len(lines) - 1) * 5
@@ -64,11 +79,12 @@ def process_photo_with_text(image_bytes, text):
     x2 = x1 + box_w
     y1 = y2 - box_h
 
-    # 60% 白色半透明背景 (Alpha = 153)
+    # 白色 60% 透明背景 (alpha = 153)
     draw.rectangle([x1, y1, x2, y2], fill=(255, 255, 255, 153))
 
     curr_y = y1 + padding
     for line in lines:
+        # 靠左對齊：文字一律從 x1 + padding 開始畫
         draw.text((x1 + padding, curr_y), line, fill=(0, 0, 0, 255), font=font)
         curr_y += (font.getbbox(line)[3] - font.getbbox(line)[1]) + 5
 
@@ -90,50 +106,57 @@ def set_cell_border_none(cell):
 
 
 # -----------------------------------------------------------------------------
-# 3. CSS 注入：明確將藍色分隔線設在頂部凍結區塊的正下方
+# 3. CSS：窄版手機畫面 + 頂部凍結區塊（下緣藍線）
 # -----------------------------------------------------------------------------
 st.markdown(
     """
     <style>
-    /* 預留上方固定區域的空間 */
     .main .block-container {
         max-width: 550px !important;
-        padding-top: 0rem !important;
+        padding-top: 0.5rem !important;
         padding-bottom: 2rem;
     }
-    
-    /* 凍結頂部：上傳按鈕 + 縮圖 + 最下方的藍色線 */
     .frozen-header {
         position: sticky;
         top: 0;
         background-color: #ffffff;
         z-index: 9999;
-        padding-top: 15px;
-        padding-bottom: 10px;
-        border-bottom: 3px solid #2b7cff !important; /* 藍色線設定在凍結區最下方 */
+        padding-top: 10px;
+        padding-bottom: 6px;
+        border-bottom: 3px solid #2b7cff !important;
         margin-bottom: 15px;
     }
-
     .thumb-scroll {
         display: flex;
         overflow-x: auto;
         gap: 8px;
-        padding-top: 8px;
+        padding: 6px 0 4px 0;
     }
     .thumb-scroll img {
-        width: 60px;
-        height: 60px;
+        width: 56px;
+        height: 56px;
         object-fit: cover;
         border-radius: 6px;
         border: 1px solid #ddd;
+        flex: none;
     }
+    .pool-caption { font-size: 12px; color: #888; margin: 2px 0 0 0; }
     </style>
-""",
+    """,
     unsafe_allow_html=True,
 )
 
+sortable_style = """
+.sortable-component { padding: 4px; }
+.sortable-container { background-color: #f7f9fc; border-radius: 8px; margin-bottom: 6px; }
+.sortable-container-header { background-color: #2b7cff; color: white; padding: 4px 10px;
+    border-radius: 8px 8px 0 0; font-size: 13px; }
+.sortable-item { background-color: #e8f0ff; border: 1px solid #2b7cff; border-radius: 6px;
+    padding: 6px 10px; font-size: 13px; }
+"""
+
 # -----------------------------------------------------------------------------
-# 4. 凍結區塊 (藍色線以上)
+# 4. 凍結區塊：上傳 + 縮圖預覽（藍色線以上）
 # -----------------------------------------------------------------------------
 st.markdown('<div class="frozen-header">', unsafe_allow_html=True)
 
@@ -144,50 +167,102 @@ uploaded_files = st.file_uploader(
     key="uploader",
 )
 
-if uploaded_files:
-    thumb_htmls = []
-    for idx, f in enumerate(uploaded_files[:30]):
-        b64_str = base64.b64encode(f.getvalue()).decode("utf-8")
-        thumb_htmls.append(
-            f'<img src="data:image/jpeg;base64,{b64_str}" title="照片 {idx+1:02d}">'
-        )
+photo_map = {}   # {"P01": UploadedFile, ...}
+photo_thumb_label = {}
 
-    st.markdown(
-        f'<div class="thumb-scroll">{"".join(thumb_htmls)}</div>',
-        unsafe_allow_html=True,
-    )
+if uploaded_files:
+    if len(uploaded_files) > 30:
+        st.warning("最多支援 30 張照片，僅取前 30 張。")
+        uploaded_files = uploaded_files[:30]
+
+    signature = tuple((f.name, f.size) for f in uploaded_files)
+    if signature != st.session_state.uploaded_signature:
+        # 新的一批照片，重置已分配的項目
+        st.session_state.uploaded_signature = signature
+        st.session_state.assignments = {}
+
+    for idx, f in enumerate(uploaded_files):
+        key = f"P{idx + 1:02d}"
+        photo_map[key] = f
+        photo_thumb_label[key] = f"照片{idx + 1:02d}"
+
+    # 靜態縮圖列（僅供辨識用，實際拖曳用下方的可拖曳清單）
+    thumb_htmls = [
+        f'<img src="data:image/jpeg;base64,{__import__("base64").b64encode(f.getvalue()).decode()}" title="照片{idx+1:02d}">'
+        for idx, f in enumerate(uploaded_files)
+    ]
+    st.markdown(f'<div class="thumb-scroll">{"".join(thumb_htmls)}</div>', unsafe_allow_html=True)
+    st.markdown('<p class="pool-caption">↑ 縮圖預覽（僅供辨識）／↓ 拖曳下方項目分配到各列</p>', unsafe_allow_html=True)
 
 st.markdown("</div>", unsafe_allow_html=True)  # 藍色線結束點
 
 # -----------------------------------------------------------------------------
-# 5. 畫面下半部：清單區
+# 5. 拖曳分配區（自訂元件：streamlit-sortables，跨容器拖曳）
 # -----------------------------------------------------------------------------
-photo_options = ["(未選擇)"] + [
-    f"照片 {i+1:02d} - {f.name}" for i, f in enumerate(uploaded_files or [])
-]
+if uploaded_files:
+    assignments = st.session_state.assignments
+    assigned_keys = set(assignments.values())
+    pool_items = [photo_thumb_label[k] for k in photo_map if k not in assigned_keys]
 
+    # 反查：顯示文字 -> photo key
+    label_to_key = {v: k for k, v in photo_thumb_label.items()}
+
+    containers = [{"header": "📷 待分配照片（拖曳到下方列）", "items": pool_items}]
+    row_keys = [f"{i:02d}" for i in range(1, st.session_state.rows_count + 1)]
+    for rk in row_keys:
+        current_key = assignments.get(rk)
+        items = [photo_thumb_label[current_key]] if current_key and current_key in photo_map else []
+        containers.append({"header": f"第 {rk} 項", "items": items})
+
+    # key 隨照片數量與列數變化而改變，避免元件內部狀態與 Python 端不同步
+    sortable_key = f"sortable_{len(photo_map)}_{st.session_state.rows_count}"
+
+    result = sort_items(containers, multi_containers=True, direction="horizontal", custom_style=sortable_style)
+
+    # 解析拖曳結果，寫回 assignments；若同一列被塞入多張，只保留第一張，其餘退回待分配區
+    new_assignments = {}
+    overflow = False
+    if result:
+        for container in result[1:]:
+            row_key = container["header"].replace("第 ", "").replace(" 項", "")
+            items = container["items"]
+            if items:
+                if len(items) > 1:
+                    overflow = True
+                new_assignments[row_key] = label_to_key.get(items[0])
+
+    if new_assignments != assignments:
+        st.session_state.assignments = new_assignments
+        if overflow:
+            st.rerun()
+else:
+    st.info("請先上傳照片")
+
+st.divider()
+
+# -----------------------------------------------------------------------------
+# 6. 下排清單：編號 + 縮圖 + 文字敘述
+# -----------------------------------------------------------------------------
 for i in range(1, st.session_state.rows_count + 1):
     row_num = f"{i:02d}"
+    assigned_key = st.session_state.assignments.get(row_num)
 
-    col_num, col_select, col_txt = st.columns([0.5, 1.8, 2.7])
+    col_num, col_thumb, col_txt = st.columns([0.5, 1.8, 2.7])
 
     with col_num:
         st.markdown(f"### {row_num}")
 
-    with col_select:
-        selected = st.selectbox(
-            f"選擇照片 {row_num}",
-            options=photo_options,
-            key=f"select_{i}",
-            label_visibility="collapsed",
-        )
-
-        if selected != "(未選擇)" and uploaded_files:
-            img_idx = photo_options.index(selected) - 1
-            st.image(uploaded_files[img_idx], use_container_width=True)
+    with col_thumb:
+        if assigned_key and assigned_key in photo_map:
+            st.image(photo_map[assigned_key], use_container_width=True)
+            if st.button("✕ 移除", key=f"remove_{i}"):
+                st.session_state.assignments.pop(row_num, None)
+                st.rerun()
+        else:
+            st.caption("尚未指派照片")
 
     with col_txt:
-        desc = st.text_area(
+        st.text_area(
             f"敘述 {row_num}",
             placeholder="文字敘述...",
             key=f"desc_{i}",
@@ -202,15 +277,15 @@ if st.button("➕ 新增項目"):
 st.divider()
 
 # -----------------------------------------------------------------------------
-# 6. 匯出下載
+# 7. 匯出下載
 # -----------------------------------------------------------------------------
 st.subheader("📥 下載專區")
 today_str = datetime.now().strftime("%Y%m%d")
 
 dl_mode = st.radio(
     "照片下載模式：",
-    ["📱 手機模式 (直接下載單張)", "💻 電腦模式 (下載 ZIP 壓縮檔)"],
-    horizontal=True,
+    ["📱 手機模式 (逐張下載，方便直接檢視)", "💻 電腦模式 (下載 ZIP 壓縮檔)"],
+    horizontal=False,
 )
 
 col_dl_photo, col_dl_word = st.columns(2)
@@ -218,25 +293,18 @@ col_dl_photo, col_dl_word = st.columns(2)
 with col_dl_photo:
     if dl_mode == "💻 電腦模式 (下載 ZIP 壓縮檔)":
         if st.button("下載照片"):
-            if not uploaded_files:
-                st.warning("請先上傳照片！")
+            if not photo_map or not st.session_state.assignments:
+                st.warning("請先上傳照片並指派到列表！")
             else:
                 zip_buffer = io.BytesIO()
-                with zipfile.ZipFile(
-                    zip_buffer, "w", zipfile.ZIP_DEFLATED
-                ) as zf:
+                with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
                     for idx in range(1, st.session_state.rows_count + 1):
-                        sel = st.session_state.get(f"select_{idx}", "(未選擇)")
+                        row_num = f"{idx:02d}"
+                        pkey = st.session_state.assignments.get(row_num)
                         desc = st.session_state.get(f"desc_{idx}", "")
-                        if sel != "(未選擇)":
-                            img_idx = photo_options.index(sel) - 1
-                            img_out = process_photo_with_text(
-                                uploaded_files[img_idx].getvalue(), desc
-                            )
-                            zf.writestr(
-                                f"{today_str}-{idx:02d}.jpg", img_out.getvalue()
-                            )
-
+                        if pkey and pkey in photo_map:
+                            img_out = process_photo_with_text(photo_map[pkey].getvalue(), desc)
+                            zf.writestr(f"{today_str}-{row_num}.jpg", img_out.getvalue())
                 zip_buffer.seek(0)
                 st.download_button(
                     "⬇️ 下載照片 ZIP",
@@ -246,28 +314,25 @@ with col_dl_photo:
                 )
     else:
         for idx in range(1, st.session_state.rows_count + 1):
-            sel = st.session_state.get(f"select_{idx}", "(未選擇)")
+            row_num = f"{idx:02d}"
+            pkey = st.session_state.assignments.get(row_num)
             desc = st.session_state.get(f"desc_{idx}", "")
-            if sel != "(未選擇)" and uploaded_files:
-                img_idx = photo_options.index(sel) - 1
-                img_out = process_photo_with_text(
-                    uploaded_files[img_idx].getvalue(), desc
-                )
+            if pkey and pkey in photo_map:
+                img_out = process_photo_with_text(photo_map[pkey].getvalue(), desc)
                 st.download_button(
-                    label=f"⬇️ 下載 {today_str}-{idx:02d}.jpg",
+                    label=f"⬇️ 下載 {today_str}-{row_num}.jpg",
                     data=img_out,
-                    file_name=f"{today_str}-{idx:02d}.jpg",
+                    file_name=f"{today_str}-{row_num}.jpg",
                     mime="image/jpeg",
                     key=f"dl_single_{idx}",
                 )
 
 with col_dl_word:
     if st.button("下載word", use_container_width=True):
-        if not uploaded_files:
-            st.warning("請先上傳照片！")
+        if not photo_map or not st.session_state.assignments:
+            st.warning("請先上傳照片並指派到列表！")
         else:
             doc = Document()
-
             for section in doc.sections:
                 section.top_margin = Inches(0.5)
                 section.bottom_margin = Inches(0.5)
@@ -276,41 +341,42 @@ with col_dl_word:
 
             items_to_print = []
             for idx in range(1, st.session_state.rows_count + 1):
-                sel = st.session_state.get(f"select_{idx}", "(未選擇)")
+                row_num = f"{idx:02d}"
+                pkey = st.session_state.assignments.get(row_num)
                 desc = st.session_state.get(f"desc_{idx}", "")
-                if sel != "(未選擇)":
-                    img_idx = photo_options.index(sel) - 1
-                    img_out = process_photo_with_text(
-                        uploaded_files[img_idx].getvalue(), desc
-                    )
+                if pkey and pkey in photo_map:
+                    img_out = process_photo_with_text(photo_map[pkey].getvalue(), desc)
                     items_to_print.append(img_out)
 
-            for page_start in range(0, len(items_to_print), 4):
-                if page_start > 0:
-                    doc.add_page_break()
+            if not items_to_print:
+                st.warning("目前沒有已指派照片的項目！")
+            else:
+                for page_start in range(0, len(items_to_print), 4):
+                    if page_start > 0:
+                        doc.add_page_break()
 
-                page_items = items_to_print[page_start : page_start + 4]
-                table = doc.add_table(rows=2, cols=2)
-                table.autofit = False
+                    page_items = items_to_print[page_start: page_start + 4]
+                    table = doc.add_table(rows=2, cols=2)
+                    table.autofit = False
 
-                for cell_idx, img_bytes in enumerate(page_items):
-                    r = cell_idx // 2
-                    c = cell_idx % 2
-                    cell = table.cell(r, c)
-                    set_cell_border_none(cell)
+                    for cell_idx, img_bytes in enumerate(page_items):
+                        r = cell_idx // 2
+                        c = cell_idx % 2
+                        cell = table.cell(r, c)
+                        set_cell_border_none(cell)
 
-                    p = cell.paragraphs[0]
-                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    run = p.add_run()
-                    run.add_picture(img_bytes, width=Inches(3.4))
+                        p = cell.paragraphs[0]
+                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        run = p.add_run()
+                        run.add_picture(img_bytes, width=Inches(3.4))
 
-            doc_io = io.BytesIO()
-            doc.save(doc_io)
-            doc_io.seek(0)
+                doc_io = io.BytesIO()
+                doc.save(doc_io)
+                doc_io.seek(0)
 
-            st.download_button(
-                label=f"⬇️ 下載 {today_str}_01.docx",
-                data=doc_io,
-                file_name=f"{today_str}_01.docx",
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            )
+                st.download_button(
+                    label=f"⬇️ 下載 {today_str}_01.docx",
+                    data=doc_io,
+                    file_name=f"{today_str}_01.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
