@@ -53,7 +53,8 @@ def process_photo_with_text(image_bytes, text):
     overlay = Image.new("RGBA", image.size, (255, 255, 255, 0))
     draw = ImageDraw.Draw(overlay)
 
-    font_size = max(16, int(min(width, height) * 0.028))
+    # 字級放大 10 倍（原本 0.028 比例 / 最小 16px → 現在 0.28 比例 / 最小 160px）
+    font_size = max(160, int(min(width, height) * 0.28))
     font = None
     for path in FONT_PATHS:
         try:
@@ -65,7 +66,7 @@ def process_photo_with_text(image_bytes, text):
         font = ImageFont.load_default()
 
     margin = int(min(width, height) * 0.025)
-    padding = 10
+    padding = max(10, int(font_size * 0.2))
 
     lines = text.split("\n") if text else [" "]
     line_heights = [font.getbbox(line)[3] - font.getbbox(line)[1] for line in lines]
@@ -147,12 +148,13 @@ st.markdown(
 )
 
 sortable_style = """
-.sortable-component { padding: 4px; }
-.sortable-container { background-color: #f7f9fc; border-radius: 8px; margin-bottom: 6px; }
-.sortable-container-header { background-color: #2b7cff; color: white; padding: 4px 10px;
-    border-radius: 8px 8px 0 0; font-size: 13px; }
-.sortable-item { background-color: #e8f0ff; border: 1px solid #2b7cff; border-radius: 6px;
-    padding: 6px 10px; font-size: 13px; }
+.sortable-component { padding: 0; }
+.sortable-container { background-color: transparent; border-bottom: 1px solid #eee;
+    margin-bottom: 2px; padding-bottom: 4px; }
+.sortable-container-header { background-color: transparent; color: #111827; padding: 2px 2px;
+    font-size: 22px; font-weight: 700; border-radius: 0; }
+.sortable-item { background-color: #f0f3f9; border: 1px solid #cfd8e8; border-radius: 6px;
+    padding: 5px 10px; font-size: 13px; color: #333; }
 """
 
 # -----------------------------------------------------------------------------
@@ -192,7 +194,6 @@ if uploaded_files:
         for idx, f in enumerate(uploaded_files)
     ]
     st.markdown(f'<div class="thumb-scroll">{"".join(thumb_htmls)}</div>', unsafe_allow_html=True)
-    st.markdown('<p class="pool-caption">↑ 縮圖預覽（僅供辨識）／↓ 拖曳下方項目分配到各列</p>', unsafe_allow_html=True)
 
 st.markdown("</div>", unsafe_allow_html=True)  # 藍色線結束點
 
@@ -207,12 +208,12 @@ if uploaded_files:
     # 反查：顯示文字 -> photo key
     label_to_key = {v: k for k, v in photo_thumb_label.items()}
 
-    containers = [{"header": "📷 待分配照片（拖曳到下方列）", "items": pool_items}]
+    containers = [{"header": "待分配照片", "items": pool_items}]
     row_keys = [f"{i:02d}" for i in range(1, st.session_state.rows_count + 1)]
     for rk in row_keys:
         current_key = assignments.get(rk)
         items = [photo_thumb_label[current_key]] if current_key and current_key in photo_map else []
-        containers.append({"header": f"第 {rk} 項", "items": items})
+        containers.append({"header": rk, "items": items})
 
     # key 隨照片數量與列數變化而改變，避免元件內部狀態與 Python 端不同步
     sortable_key = f"sortable_{len(photo_map)}_{st.session_state.rows_count}"
@@ -224,7 +225,7 @@ if uploaded_files:
     overflow = False
     if result:
         for container in result[1:]:
-            row_key = container["header"].replace("第 ", "").replace(" 項", "")
+            row_key = container["header"]
             items = container["items"]
             if items:
                 if len(items) > 1:
