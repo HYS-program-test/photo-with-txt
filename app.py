@@ -9,22 +9,22 @@
 執行方式：
     streamlit run app.py
 
-拖曳功能說明：
-    拖曳用原生 SortableJS（CDN 載入，支援手機觸控），塞在 st.components.v1.html 的 iframe 裡執行。
-    拖放結果透過一個隱藏的 st.text_input 同步回 Python（JS 寫入該欄位值並觸發 input 事件，
-    Streamlit 偵測到值改變即觸發 rerun）。這不是 Streamlit 官方保證的雙向元件機制，
-    如果拖曳完全沒反應，請打開瀏覽器 DevTools Console 看有沒有報錯。
+拖曳 + 文字敘述說明：
+    編號、拖曳目的地、文字敘述欄位這三樣東西，全部放在「同一個」
+    st.components.v1.html 的 iframe 裡（同一份 HTML 文件），用 flex 排在同一列，
+    這樣藍線一定是滿版寬度，三者也保證對齊，不會再有「兩個元件對不上高度」的問題。
 
-    「凍結」的實作方式：拖曳區塊本身是一個「有限高度、內部可捲動」的箱子，箱子裡的待分配
-    縮圖用 CSS position:sticky 貼在箱子頂端 —— 也就是說，捲動這個箱子內部的清單找編號時，
-    縮圖列會一直留在箱子最上方。但因為技術限制（縮圖池必須跟每一列的拖放目標放在同一份
-    HTML 文件裡才能互相拖曳），沒辦法做到「捲動整個網頁時」都固定在畫面最上方；只能在這個
-    拖曳箱子「自己的捲動範圍」內固定。文字敘述欄位在拖曳箱子下方，跟著整個網頁一起捲動。
+    拖放結果 + 文字敘述，會透過一個隱藏的 st.text_input 同步回 Python：
+    JS 把 {"assignments": {...}, "descriptions": {...}} 整理成 JSON，
+    用「原生 setter + dispatchEvent + 模擬 Enter/blur」的方式寫進隱藏欄位，
+    逼 Streamlit 把值送回後端。這不是官方保證的機制，如果沒反應，
+    請看拖曳框最上方那行紅字狀態列，或瀏覽器 DevTools Console 有沒有報錯。
 
-字型：預設嘗試載入「微軟正黑體 msjh.ttc」，若部署主機沒有該字型，請將 msjh.ttc 或
-TaipeiSansTCBeta-Bold.ttf 等中文字型檔案放在與 app.py 同一資料夾，或修改 FONT_PATHS。
+字型：預設嘗試載入「微軟正黑體 msjh.ttc」，若伺服器沒有該字型會退回 Pillow 的可縮放
+預設字型（不支援中文）。要讓中文字放大生效，請把中文字型檔案放到跟 app.py 同一層。
 """
 
+import base64
 import hashlib
 import io
 import json
@@ -43,6 +43,7 @@ from PIL import Image, ImageDraw, ImageFont
 st.set_page_config(page_title="現場照片報告生成器", page_icon="📱", layout="centered")
 
 FONT_PATHS = ["msjh.ttc", "msjhbd.ttc", "TaipeiSansTCBeta-Bold.ttf", "NotoSansTC-Regular.otf"]
+ROW_BOX_HEIGHT = 76  # 尚未指派照片的框 / 文字敘述框，統一用這個高度
 
 # -----------------------------------------------------------------------------
 # 1. Session State
@@ -50,13 +51,14 @@ FONT_PATHS = ["msjh.ttc", "msjhbd.ttc", "TaipeiSansTCBeta-Bold.ttf", "NotoSansTC
 if "rows_count" not in st.session_state:
     st.session_state.rows_count = 5
 if "assignments" not in st.session_state:
-    st.session_state.assignments = {}  # {"01": ["Pxxxxxxxx", ...], "02": [], ...}
+    st.session_state.assignments = {}  # {"01": ["Pxxxxxxxxxx", ...], ...}
+if "desc_text" not in st.session_state:
+    st.session_state.desc_text = {}  # {"01": "文字敘述...", ...}
 if "dnd_sync_last" not in st.session_state:
     st.session_state.dnd_sync_last = ""
 
 
 def make_photo_key(f):
-    """以檔名+檔案大小算出穩定的 key，不受上傳順序 / 新增照片影響，避免既有指派被打亂。"""
     h = hashlib.md5(f"{f.name}|{f.size}".encode("utf-8")).hexdigest()[:10]
     return f"P{h}"
 
@@ -71,7 +73,6 @@ def process_photo_with_text(image_bytes, text):
     overlay = Image.new("RGBA", image.size, (255, 255, 255, 0))
     draw = ImageDraw.Draw(overlay)
 
-    # 文字爆掉了，從目前數值往回縮小 50 倍，重新檢視合理大小
     font_size = max(32, int(min(width, height) * 0.056))
     font = None
     font_used = None
@@ -85,10 +86,10 @@ def process_photo_with_text(image_bytes, text):
     if font is None:
         try:
             font = ImageFont.load_default(size=font_size)
-            font_used = "PIL 內建可縮放預設字型（Pillow>=10.1；會依 size 放大，但不支援中文字元）"
+            font_used = "PIL 內建可縮放預設字型（Pillow>=10.1；不支援中文字元）"
         except TypeError:
             font = ImageFont.load_default()
-            font_used = "PIL 內建固定大小預設字型（Pillow 版本太舊，不吃 size 參數，也不支援中文——強烈建議直接放中文字型檔到伺服器上）"
+            font_used = "PIL 內建固定大小預設字型（Pillow 版本太舊，不吃 size，也不支援中文）"
     st.session_state["_last_font_used"] = font_used
 
     margin = int(min(width, height) * 0.025)
@@ -131,17 +132,19 @@ def set_cell_border_none(cell):
 
 
 # -----------------------------------------------------------------------------
-# 3. 產生拖曳區的 HTML/JS（真縮圖、SortableJS、觸控可用、內部捲動凍結）
+# 3. 產生「拖曳＋文字敘述」合併區的 HTML/JS
+#    編號 + 拖曳目的地 + 文字敘述，全部在同一份 HTML、同一列裡，保證對齊
 # -----------------------------------------------------------------------------
-def build_dnd_html(photo_map, assignments, row_keys, box_height):
+def build_dnd_html(photo_map, assignments, desc_text, row_keys, box_height):
     assigned_keys = {k for keys in assignments.values() for k in keys}
     pool_keys = [k for k in photo_map if k not in assigned_keys]
 
     def chip(key):
-        b64 = photo_map[key].getvalue()
-        import base64 as b64mod
-        b64s = b64mod.b64encode(b64).decode()
+        b64s = base64.b64encode(photo_map[key].getvalue()).decode()
         return f'<div class="photo-chip" data-photo="{key}"><img src="data:image/jpeg;base64,{b64s}"></div>'
+
+    def esc(s):
+        return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     pool_html = "".join(chip(k) for k in pool_keys)
 
@@ -149,37 +152,39 @@ def build_dnd_html(photo_map, assignments, row_keys, box_height):
     for rk in row_keys:
         keys = assignments.get(rk, [])
         items_html = "".join(chip(k) for k in keys if k in photo_map)
+        desc_val = esc(desc_text.get(rk, ""))
         rows_html += f"""
         <div class="row-block">
             <div class="row-num">{rk}</div>
             <div class="dnd-list row-drop" data-row="{rk}">{items_html}</div>
+            <textarea class="row-desc" data-row="{rk}" placeholder="文字敘述...">{desc_val}</textarea>
         </div>"""
 
     return f"""
     <style>
       html, body {{ margin:0; padding:0; font-family: "Microsoft JhengHei", -apple-system, sans-serif; }}
-      #scroll-wrap {{ max-height: {box_height}px; overflow-y: auto; -webkit-overflow-scrolling: touch; }}
-      .pool-wrap {{ position: sticky; top: 0; z-index: 5; background:#ffffff;
-          display:flex; flex-wrap:wrap; gap:8px; padding:8px 4px 14px 4px;
+      .pool-wrap {{ display:flex; flex-wrap:wrap; gap:8px; padding:8px 4px 14px 4px;
           border-bottom:3px solid #2b7cff; min-height:60px; }}
       .pool-wrap:empty::after {{ content:"（全部照片已指派完畢）"; color:#9aa4b2; font-size:13px; }}
       .photo-chip {{ width:60px; height:60px; border-radius:6px; overflow:hidden;
           border:1px solid #ccc; cursor:grab; flex:none; touch-action:none; }}
       .photo-chip img {{ width:100%; height:100%; object-fit:cover; display:block; pointer-events:none; }}
       .row-block {{ display:flex; align-items:flex-start; gap:10px; border-bottom:1px solid #eee; padding:10px 4px; }}
-      .row-num {{ flex:0 0 34px; font-size:20px; font-weight:700; color:#111827; padding-top:16px; }}
-      .row-drop {{ flex:0 1 260px; max-width:260px; min-height:16px; background:#f3f5f8; border-radius:8px;
-          padding:6px; display:flex; flex-wrap:wrap; gap:6px; touch-action:none; }}
-      .row-drop:empty::after {{ content:"尚未指派照片"; color:#9aa4b2; font-size:11px; line-height:16px; }}
+      .row-num {{ flex:0 0 30px; font-size:20px; font-weight:700; color:#111827; padding-top: calc(({ROW_BOX_HEIGHT}px - 24px)/2); }}
+      .row-drop {{ flex:1 1 0; min-width:80px; height:{ROW_BOX_HEIGHT}px; background:#f3f5f8; border-radius:8px;
+          padding:6px; display:flex; flex-wrap:wrap; align-content:flex-start; gap:6px;
+          touch-action:none; overflow-y:auto; box-sizing:border-box; }}
+      .row-drop:empty::after {{ content:"尚未指派照片"; color:#9aa4b2; font-size:11px; }}
+      .row-desc {{ flex:1.2 1 0; min-width:100px; height:{ROW_BOX_HEIGHT}px; background:#f3f5f8;
+          border:1px solid #e2e5ea; border-radius:8px; padding:8px; font-size:13px;
+          font-family:"Microsoft JhengHei", -apple-system, sans-serif; resize:none; box-sizing:border-box; }}
       .sortable-ghost {{ opacity:0.3; }}
       #dnd-status {{ font-size:11px; color:#c0392b; padding:3px 6px; background:#fff8f0;
           border-bottom:1px dashed #eab676; min-height:14px; white-space:pre-wrap; }}
     </style>
     <div id="dnd-status">狀態：載入中…</div>
-    <div id="scroll-wrap">
-      <div class="pool-wrap dnd-list" data-row="__pool__">{pool_html}</div>
-      <div>{rows_html}</div>
-    </div>
+    <div class="pool-wrap dnd-list" data-row="__pool__">{pool_html}</div>
+    <div>{rows_html}</div>
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
     <script>
     (function () {{
@@ -187,33 +192,45 @@ def build_dnd_html(photo_map, assignments, row_keys, box_height):
         var el = document.getElementById('dnd-status');
         if (el) el.textContent = '狀態：' + msg;
       }}
+      function findHiddenInput() {{
+        try {{
+          return window.parent.document.querySelector('input[aria-label="dnd_sync_field"]');
+        }} catch (e) {{
+          log('錯誤：存取父頁面失敗 - ' + (e && e.message ? e.message : e));
+          return null;
+        }}
+      }}
+      function commitToStreamlit(target, jsonStr) {{
+        var setter = Object.getOwnPropertyDescriptor(window.parent.HTMLInputElement.prototype, 'value').set;
+        setter.call(target, jsonStr);
+        target.dispatchEvent(new Event('input', {{ bubbles: true }}));
+        target.dispatchEvent(new Event('change', {{ bubbles: true }}));
+        target.focus();
+        target.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Enter', code: 'Enter', bubbles: true }}));
+        target.dispatchEvent(new KeyboardEvent('keyup', {{ key: 'Enter', code: 'Enter', bubbles: true }}));
+        target.blur();
+      }}
       function syncState() {{
-        log('偵測到拖放結束，開始同步…');
-        var state = {{}};
+        var assignments = {{}};
         document.querySelectorAll('.row-drop').forEach(function (el) {{
           var row = el.getAttribute('data-row');
-          state[row] = Array.from(el.querySelectorAll('.photo-chip')).map(function (c) {{
+          assignments[row] = Array.from(el.querySelectorAll('.photo-chip')).map(function (c) {{
             return c.getAttribute('data-photo');
           }});
         }});
-        var jsonStr = JSON.stringify(state);
+        var descriptions = {{}};
+        document.querySelectorAll('.row-desc').forEach(function (ta) {{
+          descriptions[ta.getAttribute('data-row')] = ta.value;
+        }});
+        var payload = JSON.stringify({{ assignments: assignments, descriptions: descriptions }});
+        var target = findHiddenInput();
+        if (!target) {{
+          log('錯誤：在父頁面找不到隱藏欄位');
+          return;
+        }}
         try {{
-          var doc = window.parent.document;
-          var target = doc.querySelector('input[aria-label="dnd_sync_field"]');
-          if (!target) {{
-            log('錯誤：在父頁面找不到隱藏欄位 (input[aria-label=dnd_sync_field])');
-            return;
-          }}
-          var setter = Object.getOwnPropertyDescriptor(window.parent.HTMLInputElement.prototype, 'value').set;
-          setter.call(target, jsonStr);
-          target.dispatchEvent(new Event('input', {{ bubbles: true }}));
-          target.dispatchEvent(new Event('change', {{ bubbles: true }}));
-          // Streamlit 的 text_input 通常要等 Enter 或失焦才會真的送回後端，這裡都模擬一次
-          target.focus();
-          target.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Enter', code: 'Enter', bubbles: true }}));
-          target.dispatchEvent(new KeyboardEvent('keyup', {{ key: 'Enter', code: 'Enter', bubbles: true }}));
-          target.blur();
-          log('已寫入隱藏欄位並模擬送出：' + jsonStr.slice(0, 80));
+          commitToStreamlit(target, payload);
+          log('已同步：' + payload.slice(0, 80));
         }} catch (e) {{
           log('錯誤：' + (e && e.message ? e.message : e));
         }}
@@ -232,7 +249,16 @@ def build_dnd_html(photo_map, assignments, row_keys, box_height):
             onEnd: syncState
           }});
         }});
-        log('已初始化，共 ' + lists.length + ' 個清單，可以開始拖曳');
+        var timers = {{}};
+        document.querySelectorAll('.row-desc').forEach(function (ta) {{
+          ta.addEventListener('blur', syncState);
+          ta.addEventListener('input', function () {{
+            var row = ta.getAttribute('data-row');
+            clearTimeout(timers[row]);
+            timers[row] = setTimeout(syncState, 800);
+          }});
+        }});
+        log('已初始化，共 ' + lists.length + ' 個拖曳清單，可以開始拖曳／輸入文字');
       }}
       initSortable();
     }})();
@@ -261,7 +287,6 @@ st.markdown(
         border-bottom: 3px solid #2b7cff !important;
         margin-bottom: 15px;
     }
-    /* 隱藏拖放同步用的 text_input：不可用 display:none，否則無法用程式聚焦/觸發 blur */
     div.st-key-dnd_sync_box {
         position: absolute !important;
         width: 1px !important;
@@ -310,12 +335,11 @@ if uploaded_files:
 st.markdown("</div>", unsafe_allow_html=True)  # 藍色線結束點
 
 # -----------------------------------------------------------------------------
-# 6. 拖曳指派區（全寬）
+# 6. 拖曳指派 + 文字敘述（合併在單一 iframe 裡，滿版寬度、同一列）
 # -----------------------------------------------------------------------------
 if uploaded_files:
     row_keys = [f"{i:02d}" for i in range(1, st.session_state.rows_count + 1)]
 
-    # 隱藏欄位：JS 拖放結果透過它同步回 Python
     with st.container(key="dnd_sync_box"):
         st.text_input("dnd_sync_field", key="dnd_sync_raw", label_visibility="collapsed")
 
@@ -323,17 +347,21 @@ if uploaded_files:
     if raw and raw != st.session_state.dnd_sync_last:
         try:
             parsed = json.loads(raw)
-            cleaned = {
+            new_assign = parsed.get("assignments", {})
+            new_desc = parsed.get("descriptions", {})
+            st.session_state.assignments = {
                 rk: [p for p in v if p in photo_map]
-                for rk, v in parsed.items()
+                for rk, v in new_assign.items()
                 if rk in row_keys
             }
-            st.session_state.assignments = cleaned
+            st.session_state.desc_text = {
+                rk: v for rk, v in new_desc.items() if rk in row_keys
+            }
             st.session_state.dnd_sync_last = raw
         except (json.JSONDecodeError, AttributeError):
             pass
 
-    # 清掉已被移除照片的殘留指派（例如使用者從上傳清單中刪掉某張照片）
+    # 清掉已被移除照片的殘留指派
     pruned = {
         rk: [p for p in v if p in photo_map]
         for rk, v in st.session_state.assignments.items()
@@ -341,41 +369,24 @@ if uploaded_files:
     if pruned != st.session_state.assignments:
         st.session_state.assignments = pruned
     assignments = st.session_state.assignments
+    desc_text = st.session_state.desc_text
 
     pool_count = len(photo_map) - sum(len(v) for v in assignments.values())
-    pool_lines = max(1, -(-max(pool_count, 1) // 3))
-    pool_height = 20 + pool_lines * 70
-    rows_height = len(row_keys) * 92
-    box_height = pool_height + rows_height + 20  # 不再限制上限、不做內部捲動，確保跟右側敘述欄位對得齊
+    pool_lines = max(1, -(-max(pool_count, 1) // 6))
+    box_height = 20 + pool_lines * 70 + len(row_keys) * (ROW_BOX_HEIGHT + 22) + 20
 
-    col_drop, col_desc = st.columns([1.3, 1])
-
-    with col_drop:
-        html_code = build_dnd_html(photo_map, assignments, row_keys, box_height)
-        components.html(html_code, height=box_height, scrolling=False)
-
-    with col_desc:
-        # 用一個等高的空白區塊墊高，讓「01」這一列在左右兩欄的起始高度一致
-        st.markdown(f'<div style="height:{pool_height}px;"></div>', unsafe_allow_html=True)
-        for i in range(1, st.session_state.rows_count + 1):
-            row_num = f"{i:02d}"
-            st.text_area(
-                f"敘述 {row_num}",
-                placeholder="文字敘述...",
-                key=f"desc_{i}",
-                height=76,
-                label_visibility="collapsed",
-            )
+    html_code = build_dnd_html(photo_map, assignments, desc_text, row_keys, box_height)
+    components.html(html_code, height=box_height, scrolling=False)
 
     with st.expander("🔧 除錯資訊（測試用，確認沒問題後可以請我刪掉）"):
         st.write("隱藏同步欄位目前收到的原始值 (dnd_sync_raw)：")
         st.code(raw or "(空的，代表 JS 從來沒有成功寫入過)")
         st.write("目前解析後的 assignments：")
         st.json(st.session_state.assignments)
+        st.write("目前解析後的 desc_text：")
+        st.json(st.session_state.desc_text)
         st.write("目前 photo_map 的 key：")
         st.code(list(photo_map.keys()))
-
-    st.write("")
 else:
     st.info("請先上傳照片")
 
@@ -412,7 +423,7 @@ with col_dl_photo:
                     for idx in range(1, st.session_state.rows_count + 1):
                         row_num = f"{idx:02d}"
                         pkeys = st.session_state.assignments.get(row_num, [])
-                        desc = st.session_state.get(f"desc_{idx}", "")
+                        desc = st.session_state.desc_text.get(row_num, "")
                         for n, pkey in enumerate(pkeys, start=1):
                             if pkey not in photo_map:
                                 continue
@@ -430,7 +441,7 @@ with col_dl_photo:
         for idx in range(1, st.session_state.rows_count + 1):
             row_num = f"{idx:02d}"
             pkeys = st.session_state.assignments.get(row_num, [])
-            desc = st.session_state.get(f"desc_{idx}", "")
+            desc = st.session_state.desc_text.get(row_num, "")
             for n, pkey in enumerate(pkeys, start=1):
                 if pkey not in photo_map:
                     continue
@@ -460,7 +471,7 @@ with col_dl_word:
             for idx in range(1, st.session_state.rows_count + 1):
                 row_num = f"{idx:02d}"
                 pkeys = st.session_state.assignments.get(row_num, [])
-                desc = st.session_state.get(f"desc_{idx}", "")
+                desc = st.session_state.desc_text.get(row_num, "")
                 for pkey in pkeys:
                     if pkey in photo_map:
                         img_out = process_photo_with_text(photo_map[pkey].getvalue(), desc)
