@@ -161,6 +161,7 @@ def build_dnd_html(photo_map, assignments, desc_text, row_keys, box_height):
         </div>"""
 
     return f"""
+    <meta charset="utf-8">
     <style>
       html, body {{ margin:0; padding:0; font-family: "Microsoft JhengHei", -apple-system, sans-serif; }}
       .pool-wrap {{ display:flex; flex-wrap:wrap; gap:8px; padding:8px 4px 14px 4px;
@@ -252,11 +253,6 @@ def build_dnd_html(photo_map, assignments, desc_text, row_keys, box_height):
         var timers = {{}};
         document.querySelectorAll('.row-desc').forEach(function (ta) {{
           ta.addEventListener('blur', syncState);
-          ta.addEventListener('input', function () {{
-            var row = ta.getAttribute('data-row');
-            clearTimeout(timers[row]);
-            timers[row] = setTimeout(syncState, 800);
-          }});
         }});
         log('已初始化，共 ' + lists.length + ' 個拖曳清單，可以開始拖曳／輸入文字');
       }}
