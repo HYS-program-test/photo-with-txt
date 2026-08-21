@@ -161,7 +161,7 @@ def build_dnd_html(photo_map, assignments, row_keys, box_height):
       .row-num {{ flex:0 0 34px; font-size:20px; font-weight:700; color:#111827; padding-top:16px; }}
       .row-drop {{ flex:1; min-height:64px; background:#f3f5f8; border-radius:8px;
           padding:6px; display:flex; flex-wrap:wrap; gap:6px; touch-action:none; }}
-      .row-drop:empty::after {{ content:"尚未指派照片"; color:#9aa4b2; font-size:14px; line-height:64px; }}
+      .row-drop:empty::after {{ content:"尚未指派照片"; color:#9aa4b2; font-size:11px; line-height:64px; }}
       .sortable-ghost {{ opacity:0.3; }}
       #dnd-status {{ font-size:11px; color:#c0392b; padding:3px 6px; background:#fff8f0;
           border-bottom:1px dashed #eab676; min-height:14px; white-space:pre-wrap; }}
@@ -198,7 +198,13 @@ def build_dnd_html(photo_map, assignments, row_keys, box_height):
           var setter = Object.getOwnPropertyDescriptor(window.parent.HTMLInputElement.prototype, 'value').set;
           setter.call(target, jsonStr);
           target.dispatchEvent(new Event('input', {{ bubbles: true }}));
-          log('已寫入隱藏欄位並觸發事件：' + jsonStr.slice(0, 80));
+          target.dispatchEvent(new Event('change', {{ bubbles: true }}));
+          // Streamlit 的 text_input 通常要等 Enter 或失焦才會真的送回後端，這裡都模擬一次
+          target.focus();
+          target.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Enter', code: 'Enter', bubbles: true }}));
+          target.dispatchEvent(new KeyboardEvent('keyup', {{ key: 'Enter', code: 'Enter', bubbles: true }}));
+          target.blur();
+          log('已寫入隱藏欄位並模擬送出：' + jsonStr.slice(0, 80));
         }} catch (e) {{
           log('錯誤：' + (e && e.message ? e.message : e));
         }}
@@ -246,20 +252,22 @@ st.markdown(
         border-bottom: 3px solid #2b7cff !important;
         margin-bottom: 15px;
     }
-    /* 隱藏拖放同步用的 text_input：多重保險，避免任一種選取器失效 */
+    /* 隱藏拖放同步用的 text_input：不可用 display:none，否則無法用程式聚焦/觸發 blur */
     div.st-key-dnd_sync_box {
-        display: none !important;
-        height: 0 !important;
+        position: absolute !important;
+        width: 1px !important;
+        height: 1px !important;
+        overflow: hidden !important;
+        opacity: 0.01 !important;
+        left: -9999px !important;
+        top: -9999px !important;
         margin: 0 !important;
         padding: 0 !important;
-        overflow: hidden !important;
     }
     input[aria-label="dnd_sync_field"] {
-        opacity: 0 !important;
-        position: absolute !important;
+        opacity: 0.01 !important;
         height: 1px !important;
         width: 1px !important;
-        pointer-events: none !important;
     }
     </style>
     """,
