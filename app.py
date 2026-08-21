@@ -71,16 +71,25 @@ def process_photo_with_text(image_bytes, text):
     overlay = Image.new("RGBA", image.size, (255, 255, 255, 0))
     draw = ImageDraw.Draw(overlay)
 
-    font_size = max(160, int(min(width, height) * 0.28))
+    # 字級再放大 10 倍（在前一輪已放大 10 倍的基礎上，這次再乘 10 → 總共約原本的 100 倍）
+    font_size = max(1600, int(min(width, height) * 2.8))
     font = None
+    font_used = None
     for path in FONT_PATHS:
         try:
             font = ImageFont.truetype(path, font_size)
+            font_used = path
             break
         except IOError:
             continue
     if font is None:
-        font = ImageFont.load_default()
+        try:
+            font = ImageFont.load_default(size=font_size)
+            font_used = "PIL 內建可縮放預設字型（Pillow>=10.1；會依 size 放大，但不支援中文字元）"
+        except TypeError:
+            font = ImageFont.load_default()
+            font_used = "PIL 內建固定大小預設字型（Pillow 版本太舊，不吃 size 參數，也不支援中文——強烈建議直接放中文字型檔到伺服器上）"
+    st.session_state["_last_font_used"] = font_used
 
     margin = int(min(width, height) * 0.025)
     padding = max(10, int(font_size * 0.2))
@@ -159,9 +168,9 @@ def build_dnd_html(photo_map, assignments, row_keys, box_height):
       .photo-chip img {{ width:100%; height:100%; object-fit:cover; display:block; pointer-events:none; }}
       .row-block {{ display:flex; align-items:flex-start; gap:10px; border-bottom:1px solid #eee; padding:10px 4px; }}
       .row-num {{ flex:0 0 34px; font-size:20px; font-weight:700; color:#111827; padding-top:16px; }}
-      .row-drop {{ flex:1; min-height:64px; background:#f3f5f8; border-radius:8px;
+      .row-drop {{ flex:0 1 260px; max-width:260px; min-height:16px; background:#f3f5f8; border-radius:8px;
           padding:6px; display:flex; flex-wrap:wrap; gap:6px; touch-action:none; }}
-      .row-drop:empty::after {{ content:"尚未指派照片"; color:#9aa4b2; font-size:11px; line-height:64px; }}
+      .row-drop:empty::after {{ content:"尚未指派照片"; color:#9aa4b2; font-size:11px; line-height:16px; }}
       .sortable-ghost {{ opacity:0.3; }}
       #dnd-status {{ font-size:11px; color:#c0392b; padding:3px 6px; background:#fff8f0;
           border-bottom:1px dashed #eab676; min-height:14px; white-space:pre-wrap; }}
@@ -373,6 +382,8 @@ st.divider()
 # 7. 匯出下載
 # -----------------------------------------------------------------------------
 st.subheader("📥 下載專區")
+if "_last_font_used" in st.session_state:
+    st.caption(f"（上次壓字使用的字型：{st.session_state['_last_font_used']}）")
 today_str = datetime.now().strftime("%Y%m%d")
 
 dl_mode = st.radio(
