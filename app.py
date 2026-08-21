@@ -316,6 +316,14 @@ if uploaded_files:
     html_code = build_dnd_html(photo_map, assignments, row_keys, box_height)
     components.html(html_code, height=box_height, scrolling=False)
 
+    with st.expander("🔧 除錯資訊（測試用，確認沒問題後可以請我刪掉）"):
+        st.write("隱藏同步欄位目前收到的原始值 (dnd_sync_raw)：")
+        st.code(raw or "(空的，代表 JS 從來沒有成功寫入過)")
+        st.write("目前解析後的 assignments：")
+        st.json(st.session_state.assignments)
+        st.write("目前 photo_map 的 key：")
+        st.code(list(photo_map.keys()))
+
     st.write("")
     for i in range(1, st.session_state.rows_count + 1):
         row_num = f"{i:02d}"
