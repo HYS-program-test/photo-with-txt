@@ -145,11 +145,13 @@ def build_download_all_html(files):
     return f"""
     <meta charset="utf-8">
     <style>
-      body {{ margin:0; font-family:"Microsoft JhengHei", -apple-system, sans-serif; }}
-      #dl-all-btn {{ width:100%; padding:10px; font-size:15px; font-weight:600; color:#111827;
-          background:#f3f5f8; border:1px solid #d8dde5; border-radius:8px; cursor:pointer; }}
+      body {{ margin:0; font-family:"Microsoft JhengHei", -apple-system, sans-serif;
+          overflow:visible; }}
+      #dl-all-btn {{ width:100%; padding:12px; font-size:15px; font-weight:600; color:#111827;
+          background:#f3f5f8; border:1px solid #d8dde5; border-radius:8px; cursor:pointer;
+          box-sizing:border-box; line-height:1.4; }}
       #dl-all-btn:active {{ background:#e7ebf1; }}
-      #dl-all-status {{ font-size:12px; color:#6b7280; margin-top:6px; min-height:14px; }}
+      #dl-all-status {{ font-size:12px; color:#6b7280; margin-top:8px; min-height:14px; }}
     </style>
     <button id="dl-all-btn">⬇️ 一鍵下載全部照片（共 {len(files)} 張）</button>
     <div id="dl-all-status"></div>
@@ -455,56 +457,7 @@ dl_mode = st.radio(
     horizontal=False,
 )
 
-col_dl_photo, col_dl_word = st.columns(2)
-
-with col_dl_photo:
-    if dl_mode == "💻 電腦模式 (下載 ZIP 壓縮檔)":
-        if st.button("下載照片"):
-            if not photo_map or not any(st.session_state.assignments.values()):
-                st.warning("請先上傳照片並指派到列表！")
-            else:
-                zip_buffer = io.BytesIO()
-                with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-                    for idx in range(1, st.session_state.rows_count + 1):
-                        row_num = f"{idx:02d}"
-                        pkeys = st.session_state.assignments.get(row_num, [])
-                        desc = st.session_state.desc_text.get(row_num, "")
-                        for n, pkey in enumerate(pkeys, start=1):
-                            if pkey not in photo_map:
-                                continue
-                            img_out = process_photo_with_text(photo_map[pkey].getvalue(), desc)
-                            suffix = f"-{n}" if len(pkeys) > 1 else ""
-                            zf.writestr(f"{today_str}-{row_num}{suffix}.jpg", img_out.getvalue())
-                zip_buffer.seek(0)
-                st.download_button(
-                    "⬇️ 下載照片 ZIP",
-                    data=zip_buffer,
-                    file_name=f"Photos_{today_str}.zip",
-                    mime="application/zip",
-                )
-    else:
-        if not photo_map or not any(st.session_state.assignments.values()):
-            st.warning("請先上傳照片並指派到列表！")
-        else:
-            files_payload = []
-            for idx in range(1, st.session_state.rows_count + 1):
-                row_num = f"{idx:02d}"
-                pkeys = st.session_state.assignments.get(row_num, [])
-                desc = st.session_state.desc_text.get(row_num, "")
-                for n, pkey in enumerate(pkeys, start=1):
-                    if pkey not in photo_map:
-                        continue
-                    img_out = process_photo_with_text(photo_map[pkey].getvalue(), desc)
-                    suffix = f"-{n}" if len(pkeys) > 1 else ""
-                    fname = f"{today_str}-{row_num}{suffix}.jpg"
-                    files_payload.append({
-                        "name": fname,
-                        "data": base64.b64encode(img_out.getvalue()).decode(),
-                    })
-            if files_payload:
-                components.html(build_download_all_html(files_payload), height=80)
-
-with col_dl_word:
+def render_word_download_button():
     if st.button("下載word", use_container_width=True):
         if not photo_map or not any(st.session_state.assignments.values()):
             st.warning("請先上傳照片並指派到列表！")
@@ -558,3 +511,57 @@ with col_dl_word:
                     file_name=f"{today_str}_01.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 )
+
+
+if dl_mode == "💻 電腦模式 (下載 ZIP 壓縮檔)":
+    col_dl_photo, col_dl_word = st.columns(2)
+    with col_dl_photo:
+        if st.button("下載照片"):
+            if not photo_map or not any(st.session_state.assignments.values()):
+                st.warning("請先上傳照片並指派到列表！")
+            else:
+                zip_buffer = io.BytesIO()
+                with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for idx in range(1, st.session_state.rows_count + 1):
+                        row_num = f"{idx:02d}"
+                        pkeys = st.session_state.assignments.get(row_num, [])
+                        desc = st.session_state.desc_text.get(row_num, "")
+                        for n, pkey in enumerate(pkeys, start=1):
+                            if pkey not in photo_map:
+                                continue
+                            img_out = process_photo_with_text(photo_map[pkey].getvalue(), desc)
+                            suffix = f"-{n}" if len(pkeys) > 1 else ""
+                            zf.writestr(f"{today_str}-{row_num}{suffix}.jpg", img_out.getvalue())
+                zip_buffer.seek(0)
+                st.download_button(
+                    "⬇️ 下載照片 ZIP",
+                    data=zip_buffer,
+                    file_name=f"Photos_{today_str}.zip",
+                    mime="application/zip",
+                )
+    with col_dl_word:
+        render_word_download_button()
+else:
+    # 手機模式：一鍵下載按鈕獨立整行滿版，不跟下載word並排，避免手機窄欄位把內容擠壞
+    if not photo_map or not any(st.session_state.assignments.values()):
+        st.warning("請先上傳照片並指派到列表！")
+    else:
+        files_payload = []
+        for idx in range(1, st.session_state.rows_count + 1):
+            row_num = f"{idx:02d}"
+            pkeys = st.session_state.assignments.get(row_num, [])
+            desc = st.session_state.desc_text.get(row_num, "")
+            for n, pkey in enumerate(pkeys, start=1):
+                if pkey not in photo_map:
+                    continue
+                img_out = process_photo_with_text(photo_map[pkey].getvalue(), desc)
+                suffix = f"-{n}" if len(pkeys) > 1 else ""
+                fname = f"{today_str}-{row_num}{suffix}.jpg"
+                files_payload.append({
+                    "name": fname,
+                    "data": base64.b64encode(img_out.getvalue()).decode(),
+                })
+        if files_payload:
+            components.html(build_download_all_html(files_payload), height=150, scrolling=True)
+    st.write("")
+    render_word_download_button()
