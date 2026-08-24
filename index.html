@@ -83,6 +83,7 @@
 
   <div id="download-section">
     <h2>📥 下載專區</h2>
+    <div id="assign-summary" style="font-size:12px;color:#6b7280;margin-bottom:10px;"></div>
     <label class="mode-radio"><input type="radio" name="dlmode" value="mobile" checked> 📱 手機模式（一鍵下載全部照片，非壓縮檔）</label>
     <label class="mode-radio"><input type="radio" name="dlmode" value="desktop"> 💻 電腦模式（下載 ZIP 壓縮檔）</label>
     <div class="dl-row">
@@ -213,6 +214,7 @@
   function renderAll() {
     renderPool();
     renderRows();
+    updateAssignSummary();
   }
 
   // ---------------------------------------------------------------
@@ -241,8 +243,19 @@
       });
     });
     assignments = newAssign;
-    // 縮圖池是否要移除項目，靠 DOM 本身的拖曳結果即時反映；只有「新上傳照片」或
-    // 「新增列」這種結構性變化才需要整個重畫（renderAll），一般拖曳不需要。
+    updateAssignSummary();
+  }
+
+  function updateAssignSummary() {
+    var el = document.getElementById("assign-summary");
+    if (!el) return;
+    var total = 0;
+    var parts = [];
+    Object.keys(assignments).forEach(function (rk) {
+      var n = (assignments[rk] || []).length;
+      if (n > 0) { total += n; parts.push(rk + ":" + n); }
+    });
+    el.textContent = "目前已指派照片總數：" + total + (parts.length ? "（" + parts.join("、") + "）" : "");
   }
 
   document.getElementById("add-row-btn").addEventListener("click", function () {
@@ -327,6 +340,7 @@
   // 依編號順序，展開成 [{ rowNum, filename, blob }, ...]（一列多張時自動加 -1 -2 後綴）
   async function buildExportList() {
     var list = [];
+    var failed = [];
     var keys = rowKeys();
     for (var i = 0; i < keys.length; i++) {
       var rk = keys[i];
@@ -335,10 +349,18 @@
       for (var n = 0; n < ids.length; n++) {
         var id = ids[n];
         if (!photos[id]) continue;
-        var blob = await stampPhoto(id, desc);
         var suffix = ids.length > 1 ? "-" + (n + 1) : "";
-        list.push({ rowNum: rk, filename: todayStr() + "-" + rk + suffix + ".jpg", blob: blob });
+        try {
+          var blob = await stampPhoto(id, desc);
+          list.push({ rowNum: rk, filename: todayStr() + "-" + rk + suffix + ".jpg", blob: blob });
+        } catch (err) {
+          console.error("stampPhoto failed for", rk, suffix, err);
+          failed.push(rk + suffix);
+        }
       }
+    }
+    if (failed.length) {
+      dlStatus.textContent = "警告：有 " + failed.length + " 張處理失敗被跳過（" + failed.join("、") + "），其餘 " + list.length + " 張正常。";
     }
     return list;
   }
