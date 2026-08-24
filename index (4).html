@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>現場照片報告生成器</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&display=swap">
+<style>
+  :root { --blue:#2b7cff; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; padding:0; font-family:"Microsoft JhengHei","Noto Sans TC",-apple-system,sans-serif;
+      background:#fff; color:#111827; }
+  #app { max-width: 560px; margin: 0 auto; padding-bottom: 60px; }
+
+  /* 凍結區塊：純網頁沒有 iframe 邊界問題，position:sticky 直接對整個頁面有效 */
+  #frozen-header { position: sticky; top: 0; z-index: 50; background:#fff;
+      padding: 14px 12px 10px 12px; border-bottom: 3px solid var(--blue); }
+  #frozen-header h1 { font-size: 16px; margin: 0 0 8px 0; font-weight:700; }
+  #upload-btn { display:inline-flex; align-items:center; gap:6px; padding:10px 16px;
+      background:#f3f5f8; border:1px solid #d8dde5; border-radius:8px; cursor:pointer;
+      font-size:14px; font-weight:600; }
+  #upload-btn:active { background:#e7ebf1; }
+  #file-input { display:none; }
+  #upload-caption { font-size:12px; color:#6b7280; margin-top:8px; }
+
+  #pool-wrap { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; min-height:20px; }
+  #pool-wrap:empty::after { content:"（尚未上傳照片，或全部已指派完畢）"; color:#9aa4b2; font-size:13px; }
+  .photo-chip { width:60px; height:60px; border-radius:6px; overflow:hidden; border:1px solid #ccc;
+      cursor:grab; flex:none; touch-action:none; }
+  .photo-chip img { width:100%; height:100%; object-fit:cover; display:block; pointer-events:none; }
+
+  #rows { padding: 0 12px; }
+  .row-block { display:flex; align-items:flex-start; gap:10px; padding: 12px 0; border-bottom:1px solid #eee;
+      animation: fadeIn 0.25s ease; }
+  @keyframes fadeIn { from { opacity:0; transform: translateY(4px);} to { opacity:1; transform:none; } }
+  .row-num { flex:0 0 30px; font-size:20px; font-weight:700; padding-top: 22px; }
+  .row-drop { flex:1 1 0; min-width:90px; min-height:76px; background:#f3f5f8; border-radius:8px;
+      padding:6px; display:flex; flex-wrap:wrap; align-content:flex-start; gap:6px;
+      touch-action:none; transition: background 0.15s; }
+  .row-drop.drag-over { background:#e6edfb; }
+  .row-drop:empty::after { content:"尚未指派照片"; color:#9aa4b2; font-size:11px; align-self:center; margin:auto; }
+  .row-desc { flex:1.1 1 0; min-width:100px; height:76px; background:#f3f5f8; border:1px solid #e2e5ea;
+      border-radius:8px; padding:8px; font-size:13px; font-family:inherit; resize:none; }
+  .row-remove { flex:0 0 auto; align-self:center; border:none; background:none; color:#c0392b;
+      font-size:12px; cursor:pointer; padding:4px; }
+
+  #add-row-btn { margin: 12px; padding:10px 16px; background:#fff; border:1px solid #d8dde5;
+      border-radius:8px; cursor:pointer; font-size:14px; color:#5b21b6; font-weight:600; }
+  #add-row-btn:active { background:#f5f3ff; }
+
+  hr.divider { border:none; border-top:1px solid #e5e7eb; margin: 16px 12px; }
+
+  #download-section { padding: 0 12px; }
+  #download-section h2 { font-size: 16px; margin: 0 0 10px 0; }
+  .mode-radio { display:flex; align-items:center; gap:8px; margin-bottom:6px; font-size:14px; cursor:pointer; }
+  .dl-row { display:flex; gap:10px; margin-top: 14px; }
+  .dl-btn { flex:1; padding:12px; font-size:14px; font-weight:600; border-radius:8px; cursor:pointer;
+      border:1px solid #d8dde5; background:#f3f5f8; color:#111827; transition: transform 0.1s; }
+  .dl-btn:active { transform: scale(0.97); background:#e7ebf1; }
+  .dl-btn:disabled { opacity:0.5; cursor:not-allowed; }
+  #dl-status { font-size:12px; color:#6b7280; margin-top:8px; min-height:16px; }
+  .warn { background:#fff8e6; color:#92650b; padding:10px 12px; border-radius:8px; font-size:13px; margin-top:8px; }
+
+  .sortable-ghost { opacity:0.35; }
+  .fade-slide { animation: fadeSlide 0.35s ease; }
+  @keyframes fadeSlide { from { opacity:0; transform: translateX(-6px);} to { opacity:1; transform:none; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="frozen-header">
+    <h1>📱 現場照片報告生成器</h1>
+    <label id="upload-btn" for="file-input">⬆️ 上傳照片（1~30 張）</label>
+    <input id="file-input" type="file" accept="image/jpeg,image/png" multiple>
+    <div id="upload-caption"></div>
+    <div id="pool-wrap"></div>
+  </div>
+
+  <div id="rows"></div>
+  <button id="add-row-btn">➕ 新增項目</button>
+
+  <hr class="divider">
+
+  <div id="download-section">
+    <h2>📥 下載專區</h2>
+    <label class="mode-radio"><input type="radio" name="dlmode" value="mobile" checked> 📱 手機模式（一鍵下載全部照片，非壓縮檔）</label>
+    <label class="mode-radio"><input type="radio" name="dlmode" value="desktop"> 💻 電腦模式（下載 ZIP 壓縮檔）</label>
+    <div class="dl-row">
+      <button class="dl-btn" id="dl-photos-btn">⬇️ 下載照片</button>
+      <button class="dl-btn" id="dl-word-btn">⬇️ 下載 Word</button>
+    </div>
+    <div id="dl-status"></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/docx@8.5/build/index.umd.min.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  // ---------------------------------------------------------------
+  // 狀態：全部存在記憶體裡，不跟任何伺服器來回
+  // ---------------------------------------------------------------
+  var photos = {};      // { id: { file, name, url (objectURL for preview) } }
+  var photoOrder = [];  // [id, ...] 上傳順序
+  var rowCount = 5;
+  var assignments = {}; // { "01": [id, ...], ... }
+  var idCounter = 0;
+
+  var MAX_DIM = 1920;
+  var FONT_SIZE_RATIO = 0.07; // 放大為原本的兩倍（原本 0.035）
+
+  function rowKey(n) { return String(n).padStart(2, "0"); }
+  function rowKeys() {
+    var out = [];
+    for (var i = 1; i <= rowCount; i++) out.push(rowKey(i));
+    return out;
+  }
+  function assignedIds() {
+    var s = new Set();
+    Object.keys(assignments).forEach(function (rk) {
+      (assignments[rk] || []).forEach(function (id) { s.add(id); });
+    });
+    return s;
+  }
+
+  // ---------------------------------------------------------------
+  // 上傳
+  // ---------------------------------------------------------------
+  var fileInput = document.getElementById("file-input");
+  var poolWrap = document.getElementById("pool-wrap");
+  var uploadCaption = document.getElementById("upload-caption");
+
+  fileInput.addEventListener("change", function (e) {
+    var files = Array.from(e.target.files || []);
+    if (photoOrder.length + files.length > 30) {
+      files = files.slice(0, Math.max(0, 30 - photoOrder.length));
+      alert("最多支援 30 張照片，超過的部分已忽略。");
+    }
+    files.forEach(function (file) {
+      var id = "P" + (++idCounter);
+      photos[id] = { file: file, name: file.name, url: URL.createObjectURL(file) };
+      photoOrder.push(id);
+    });
+    fileInput.value = "";
+    renderAll();
+  });
+
+  // ---------------------------------------------------------------
+  // 渲染
+  // ---------------------------------------------------------------
+  function chipEl(id) {
+    var div = document.createElement("div");
+    div.className = "photo-chip";
+    div.dataset.photo = id;
+    var img = document.createElement("img");
+    img.src = photos[id].url;
+    div.appendChild(img);
+    return div;
+  }
+
+  function renderPool() {
+    poolWrap.innerHTML = "";
+    var assigned = assignedIds();
+    photoOrder.forEach(function (id) {
+      if (!assigned.has(id)) poolWrap.appendChild(chipEl(id));
+    });
+    uploadCaption.textContent = photoOrder.length
+      ? "已上傳 " + photoOrder.length + " 張照片，拖曳縮圖到下方編號列即可指派（可放多張）。"
+      : "";
+    initSortable(poolWrap, "__pool__");
+  }
+
+  var rowsWrap = document.getElementById("rows");
+
+  function renderRows() {
+    rowsWrap.innerHTML = "";
+    rowKeys().forEach(function (rk) {
+      var block = document.createElement("div");
+      block.className = "row-block";
+
+      var num = document.createElement("div");
+      num.className = "row-num";
+      num.textContent = rk;
+
+      var drop = document.createElement("div");
+      drop.className = "row-drop";
+      drop.dataset.row = rk;
+      (assignments[rk] || []).forEach(function (id) {
+        if (photos[id]) drop.appendChild(chipEl(id));
+      });
+
+      var desc = document.createElement("textarea");
+      desc.className = "row-desc";
+      desc.placeholder = "文字敘述...";
+      desc.dataset.row = rk;
+      desc.value = descText[rk] || "";
+      desc.addEventListener("input", function () { descText[rk] = desc.value; });
+
+      block.appendChild(num);
+      block.appendChild(drop);
+      block.appendChild(desc);
+      rowsWrap.appendChild(block);
+
+      initSortable(drop, rk);
+    });
+  }
+
+  var descText = {}; // { "01": "文字...", ... }
+
+  function renderAll() {
+    renderPool();
+    renderRows();
+  }
+
+  // ---------------------------------------------------------------
+  // 拖曳（純前端，沒有任何伺服器來回，天生不會有延遲/亂跑的問題）
+  // ---------------------------------------------------------------
+  var sortableInstances = [];
+  function initSortable(el, rowId) {
+    new Sortable(el, {
+      group: "photos",
+      animation: 150,
+      ghostClass: "sortable-ghost",
+      onAdd: syncAssignmentsFromDOM,
+      onRemove: syncAssignmentsFromDOM,
+      onEnd: function () {
+        syncAssignmentsFromDOM();
+        // 只更新空狀態提示等輕量 UI，不整個重建 DOM，避免打斷任何互動
+      }
+    });
+  }
+
+  function syncAssignmentsFromDOM() {
+    var newAssign = {};
+    document.querySelectorAll(".row-drop").forEach(function (el) {
+      newAssign[el.dataset.row] = Array.from(el.querySelectorAll(".photo-chip")).map(function (c) {
+        return c.dataset.photo;
+      });
+    });
+    assignments = newAssign;
+    // 縮圖池是否要移除項目，靠 DOM 本身的拖曳結果即時反映；只有「新上傳照片」或
+    // 「新增列」這種結構性變化才需要整個重畫（renderAll），一般拖曳不需要。
+  }
+
+  document.getElementById("add-row-btn").addEventListener("click", function () {
+    rowCount += 1;
+    renderRows(); // 只需要重建列表部分
+  });
+
+  // ---------------------------------------------------------------
+  // 照片壓字（Canvas，瀏覽器原生支援中文，不需要另外找字型檔）
+  // ---------------------------------------------------------------
+  async function stampPhoto(id, text) {
+    await document.fonts.load('700 40px "Microsoft JhengHei"').catch(function () {});
+    await document.fonts.load('700 40px "Noto Sans TC"').catch(function () {});
+
+    var img = await loadImage(photos[id].url);
+    var w = img.naturalWidth, h = img.naturalHeight;
+    var scale = Math.min(1, MAX_DIM / Math.max(w, h));
+    w = Math.round(w * scale);
+    h = Math.round(h * scale);
+
+    var canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    var ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+
+    var fontSize = Math.max(20, Math.round(Math.min(w, h) * FONT_SIZE_RATIO));
+    var fontFamily = '"Microsoft JhengHei","Noto Sans TC",sans-serif';
+    ctx.font = "700 " + fontSize + "px " + fontFamily;
+    ctx.textBaseline = "top";
+
+    var lines = (text || "").split("\n");
+    if (lines.length === 1 && lines[0] === "") lines = [" "];
+    var lineHeight = Math.round(fontSize * 1.35);
+    var padding = Math.max(8, Math.round(fontSize * 0.35));
+    var margin = Math.round(Math.min(w, h) * 0.025);
+
+    var maxLineWidth = 0;
+    lines.forEach(function (line) {
+      var mw = ctx.measureText(line).width;
+      if (mw > maxLineWidth) maxLineWidth = mw;
+    });
+
+    var boxW = maxLineWidth + padding * 2;
+    var boxH = lines.length * lineHeight + padding * 2;
+    var x1 = margin;
+    var y2 = h - margin;
+    var y1 = y2 - boxH;
+
+    ctx.fillStyle = "rgba(255,255,255,0.6)";
+    ctx.fillRect(x1, y1, boxW, boxH);
+
+    ctx.fillStyle = "#000000";
+    lines.forEach(function (line, i) {
+      ctx.fillText(line, x1 + padding, y1 + padding + i * lineHeight);
+    });
+
+    return new Promise(function (resolve) {
+      canvas.toBlob(function (blob) { resolve(blob); }, "image/jpeg", 0.92);
+    });
+  }
+
+  function loadImage(url) {
+    return new Promise(function (resolve, reject) {
+      var img = new Image();
+      img.onload = function () { resolve(img); };
+      img.onerror = reject;
+      img.src = url;
+    });
+  }
+
+  function todayStr() {
+    var d = new Date();
+    var yyyy = d.getFullYear();
+    var mm = String(d.getMonth() + 1).padStart(2, "0");
+    var dd = String(d.getDate()).padStart(2, "0");
+    return "" + yyyy + mm + dd;
+  }
+
+  // 依編號順序，展開成 [{ rowNum, filename, blob }, ...]（一列多張時自動加 -1 -2 後綴）
+  async function buildExportList() {
+    var list = [];
+    var keys = rowKeys();
+    for (var i = 0; i < keys.length; i++) {
+      var rk = keys[i];
+      var ids = assignments[rk] || [];
+      var desc = descText[rk] || "";
+      for (var n = 0; n < ids.length; n++) {
+        var id = ids[n];
+        if (!photos[id]) continue;
+        var blob = await stampPhoto(id, desc);
+        var suffix = ids.length > 1 ? "-" + (n + 1) : "";
+        list.push({ rowNum: rk, filename: todayStr() + "-" + rk + suffix + ".jpg", blob: blob });
+      }
+    }
+    return list;
+  }
+
+  // ---------------------------------------------------------------
+  // 下載：照片
+  // ---------------------------------------------------------------
+  var dlStatus = document.getElementById("dl-status");
+  function getMode() {
+    return document.querySelector('input[name="dlmode"]:checked').value;
+  }
+
+  document.getElementById("dl-photos-btn").addEventListener("click", async function () {
+    if (!Object.values(assignments).some(function (v) { return v && v.length; })) {
+      dlStatus.textContent = "請先上傳照片並指派到列表！";
+      return;
+    }
+    dlStatus.textContent = "處理中…";
+    try {
+      var list = await buildExportList();
+      if (!list.length) {
+        dlStatus.textContent = "錯誤：沒有產生任何照片（assignments 有資料，但 buildExportList 回傳空陣列，可能是 photos 對應不到）。";
+        return;
+      }
+
+      if (getMode() === "desktop") {
+        if (typeof JSZip === "undefined") {
+          dlStatus.textContent = "錯誤：JSZip 函式庫沒有載入成功（CDN 可能被擋）。";
+          return;
+        }
+        var zip = new JSZip();
+        list.forEach(function (item) { zip.file(item.filename, item.blob); });
+        var content = await zip.generateAsync({ type: "blob" });
+        triggerDownload(content, "Photos_" + todayStr() + ".zip");
+        dlStatus.textContent = "完成，共 " + list.length + " 張照片（ZIP）。";
+      } else {
+        for (var i = 0; i < list.length; i++) {
+          dlStatus.textContent = "下載中… (" + (i + 1) + "/" + list.length + ") " + list[i].filename;
+          triggerDownload(list[i].blob, list[i].filename);
+          await sleep(300);
+        }
+        dlStatus.textContent = "完成，共下載 " + list.length + " 張照片。";
+      }
+    } catch (err) {
+      dlStatus.textContent = "錯誤：" + (err && err.message ? err.message : err);
+      console.error(err);
+    }
+  });
+
+  function triggerDownload(blob, filename) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+  }
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+  // ---------------------------------------------------------------
+  // 下載：Word（docx 函式庫，2x2 表格、無框線、每頁 4 張）
+  // ---------------------------------------------------------------
+  document.getElementById("dl-word-btn").addEventListener("click", async function () {
+    if (!Object.values(assignments).some(function (v) { return v && v.length; })) {
+      dlStatus.textContent = "請先上傳照片並指派到列表！";
+      return;
+    }
+    if (typeof docx === "undefined") {
+      dlStatus.textContent = "錯誤：docx 函式庫沒有載入成功（CDN 可能被擋，或版本網址失效）。";
+      return;
+    }
+    dlStatus.textContent = "產生 Word 檔中…";
+    try {
+      var list = await buildExportList();
+      if (!list.length) {
+        dlStatus.textContent = "目前沒有已指派照片的項目！";
+        return;
+      }
+
+    var D = docx;
+    var noBorder = { style: D.BorderStyle.NONE, size: 0, color: "FFFFFF" };
+    var borders = { top: noBorder, bottom: noBorder, left: noBorder, right: noBorder };
+
+    async function blobToUint8(blob) {
+      var buf = await blob.arrayBuffer();
+      return new Uint8Array(buf);
+    }
+
+    function cell(imageData) {
+      return new D.TableCell({
+        borders: borders,
+        children: [new D.Paragraph({
+          alignment: D.AlignmentType.CENTER,
+          children: [new D.ImageRun({ data: imageData, transformation: { width: 380, height: 285 } })]
+        })]
+      });
+    }
+
+    var PER_PAGE = 6;
+    var children = [];
+    for (var p = 0; p < list.length; p += PER_PAGE) {
+      var page = list.slice(p, p + PER_PAGE);
+      var imgs = [];
+      for (var k = 0; k < page.length; k++) imgs.push(await blobToUint8(page[k].blob));
+      var rows = [];
+      for (var r = 0; r < 3; r++) {
+        var cells = [];
+        for (var c = 0; c < 2; c++) {
+          var idx = r * 2 + c;
+          cells.push(idx < imgs.length ? cell(imgs[idx]) : new D.TableCell({ borders: borders, children: [new D.Paragraph("")] }));
+        }
+        rows.push(new D.TableRow({ children: cells }));
+      }
+      children.push(new D.Table({ rows: rows, width: { size: 100, type: D.WidthType.PERCENTAGE } }));
+      if (p + PER_PAGE < list.length) children.push(new D.Paragraph({ children: [], pageBreakBefore: true }));
+    }
+
+    var doc = new D.Document({
+      sections: [{
+        properties: { page: { margin: { top: 288, bottom: 288, left: 288, right: 288 } } },
+        children: children
+      }]
+    });
+
+    var blob = await D.Packer.toBlob(doc);
+    triggerDownload(blob, todayStr() + "_01.docx");
+    dlStatus.textContent = "完成，共 " + list.length + " 張照片的 Word 已下載。";
+    } catch (err) {
+      dlStatus.textContent = "錯誤：" + (err && err.message ? err.message : err);
+      console.error(err);
+    }
+  });
+
+  // ---------------------------------------------------------------
+  // 啟動
+  // ---------------------------------------------------------------
+  renderAll();
+})();
+</script>
+</body>
+</html>
