@@ -88,7 +88,7 @@
   <div id="download-section">
     <h2>📥 下載專區</h2>
     <div id="assign-summary" style="font-size:12px;color:#6b7280;margin-bottom:10px;"></div>
-    <label class="mode-radio"><input type="radio" name="dlmode" value="mobile" checked> 📱 手機模式 </label>
+    <label class="mode-radio"><input type="radio" name="dlmode" value="mobile" checked> 📱 手機模式（一鍵下載全部照片，非壓縮檔）</label>
     <label class="mode-radio"><input type="radio" name="dlmode" value="desktop"> 💻 電腦模式（下載 ZIP 壓縮檔）</label>
     <div class="dl-row">
       <button class="dl-btn" id="dl-photos-btn">⬇️ 下載照片</button>
@@ -470,12 +470,20 @@
       return new Uint8Array(buf);
     }
 
+    // 明確指定 A4 版面 + 固定欄寬，避免不同 Word App 對「自動分配欄寬」算法不一致，
+    // 導致某些 App（例如 iOS 版）把左欄擠壓掉
+    var PAGE_WIDTH = 11906;   // A4 寬度 (twips)
+    var PAGE_HEIGHT = 16838;  // A4 高度 (twips)
+    var MARGIN = 288;         // 0.2in
+    var COL_WIDTH = Math.floor((PAGE_WIDTH - MARGIN * 2) / 2); // 每欄固定寬度
+
     function cell(imageData) {
       return new D.TableCell({
         borders: borders,
+        width: { size: COL_WIDTH, type: D.WidthType.DXA },
         children: [new D.Paragraph({
           alignment: D.AlignmentType.CENTER,
-          children: [new D.ImageRun({ data: imageData, transformation: { width: 380, height: 285 } })]
+          children: [new D.ImageRun({ data: imageData, transformation: { width: 330, height: 248 } })]
         })]
       });
     }
@@ -491,17 +499,26 @@
         var cells = [];
         for (var c = 0; c < 2; c++) {
           var idx = r * 2 + c;
-          cells.push(idx < imgs.length ? cell(imgs[idx]) : new D.TableCell({ borders: borders, children: [new D.Paragraph("")] }));
+          cells.push(idx < imgs.length ? cell(imgs[idx]) : new D.TableCell({ borders: borders, width: { size: COL_WIDTH, type: D.WidthType.DXA }, children: [new D.Paragraph("")] }));
         }
         rows.push(new D.TableRow({ children: cells }));
       }
-      children.push(new D.Table({ rows: rows, width: { size: 100, type: D.WidthType.PERCENTAGE } }));
+      children.push(new D.Table({
+        rows: rows,
+        width: { size: PAGE_WIDTH - MARGIN * 2, type: D.WidthType.DXA },
+        columnWidths: [COL_WIDTH, COL_WIDTH]
+      }));
       if (p + PER_PAGE < list.length) children.push(new D.Paragraph({ children: [], pageBreakBefore: true }));
     }
 
     var doc = new D.Document({
       sections: [{
-        properties: { page: { margin: { top: 288, bottom: 288, left: 288, right: 288 } } },
+        properties: {
+          page: {
+            size: { width: PAGE_WIDTH, height: PAGE_HEIGHT },
+            margin: { top: MARGIN, bottom: MARGIN, left: MARGIN, right: MARGIN }
+          }
+        },
         children: children
       }]
     });
