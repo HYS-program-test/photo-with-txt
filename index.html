@@ -59,11 +59,10 @@
   .dl-btn:active { transform: scale(0.97); background:#e7ebf1; }
   .dl-btn:disabled { opacity:0.5; cursor:not-allowed; }
   #dl-status { font-size:12px; color:#6b7280; margin-top:8px; min-height:16px; }
-  #dl-individual-links { display:flex; flex-direction:column; gap:8px; margin-top:10px; }
-  #dl-individual-links a { display:flex; align-items:center; gap:8px; padding:10px; background:#f3f5f8;
-      border:1px solid #d8dde5; border-radius:8px; text-decoration:none; color:#111827; font-size:13px; }
-  #dl-individual-links a:active { background:#e7ebf1; }
-  #dl-individual-links img { width:36px; height:36px; object-fit:cover; border-radius:4px; flex:none; }
+  #dl-individual-links { display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:10px; }
+  #dl-individual-links figure { margin:0; }
+  #dl-individual-links img { width:100%; display:block; border-radius:8px; border:1px solid #ddd; }
+  #dl-individual-links figcaption { font-size:11px; color:#6b7280; text-align:center; margin-top:4px; }
   .warn { background:#fff8e6; color:#92650b; padding:10px 12px; border-radius:8px; font-size:13px; margin-top:8px; }
 
   .sortable-ghost { opacity:0.35; }
@@ -405,7 +404,7 @@
         dlStatus.textContent = "完成，共 " + list.length + " 張照片（ZIP）。";
       } else {
         renderIndividualDownloadLinks(list);
-        dlStatus.textContent = "已產生 " + list.length + " 張照片，請在下方一張一張點擊下載（手機瀏覽器對『程式自動連續觸發下載』限制很嚴，逐張手動點擊最不容易被擋掉）。";
+        dlStatus.textContent = "已產生 " + list.length + " 張照片，長按任一張照片即可跳出手機原生選單（分享／儲存到照片／拷貝）。";
       }
     } catch (err) {
       dlStatus.textContent = "錯誤：" + (err && err.message ? err.message : err);
@@ -430,16 +429,15 @@
     container.innerHTML = "";
     list.forEach(function (item) {
       var url = URL.createObjectURL(item.blob);
-      var a = document.createElement("a");
-      a.href = url;
-      a.download = item.filename;
+      var fig = document.createElement("figure");
       var img = document.createElement("img");
       img.src = url;
-      var label = document.createElement("span");
-      label.textContent = "⬇️ " + item.filename;
-      a.appendChild(img);
-      a.appendChild(label);
-      container.appendChild(a);
+      img.alt = item.filename;
+      var caption = document.createElement("figcaption");
+      caption.textContent = item.filename;
+      fig.appendChild(img);
+      fig.appendChild(caption);
+      container.appendChild(fig);
     });
   }
 
